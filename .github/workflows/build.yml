@@ -1,0 +1,132 @@
+name: Build Lumen
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      object_access:
+        description: "Enable object access (attach lights to objects, object shadow casters). Experimental: not yet compiled against the real SDK."
+        type: boolean
+        default: false
+      sdk_ref:
+        description: "DarkEdif SDK git ref to build against (blank = default branch)"
+        type: string
+        default: ""
+
+jobs:
+  # Fast checks on Linux: core unit tests, spec/C++ consistency, extension logic against a DarkEdif mock.
+  core-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run portable tests
+        run: sh run_tests.sh
+
+  build:
+    needs: core-tests
+    runs-on: windows-2022
+    env:
+      OUT: ${{ github.workspace }}\out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone the DarkEdif SDK
+        shell: pwsh
+        run: |
+          $ref = '${{ inputs.sdk_ref }}'
+          $gitArgs = @('clone', '--depth', '1')
+          if ($ref) { $gitArgs += @('--branch', $ref) }
+          $gitArgs += @('https://github.com/SortaCore/MMF2Exts.git', "$env:RUNNER_TEMP\sdk")
+          git @gitArgs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Assemble the project from the template
+        shell: pwsh
+        run: |
+          $extra = @()
+          if ('${{ inputs.object_access }}' -eq 'true') { $extra += '--object-access' }
+          python ci/assemble.py --sdk "$env:RUNNER_TEMP\sdk" --repo "$env:GITHUB_WORKSPACE" --out "$env:OUT" @extra
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build (Edittime Unicode)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory "$env:OUT\logs" -Force | Out-Null
+          $sln = Get-ChildItem $env:RUNNER_TEMP\sdk, $env:LUMEN_SDK_DARKEDIF -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
+          $sd = if ($sln) { $sln.DirectoryName } else { $env:LUMEN_SDK_DARKEDIF }
+          $sd = $sd.TrimEnd('\') + '\'
+          if ($sd -match ' ') { $sd += '\' }
+          "SolutionDir = $sd" | Tee-Object -FilePath "$env:OUT\logs\solutiondir.txt"
+          "LUMEN_SOLUTION_DIR=$sd" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          msbuild $env:LUMEN_VCXPROJ /nologo /m /v:m "/p:Configuration=Edittime Unicode" /p:Platform=Win32 "/p:SolutionDir=$sd" /fl "/flp:logfile=$env:OUT\logs\msbuild-edittime.log;verbosity=normal"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build (Runtime Unicode)
+        shell: pwsh
+        run: |
+          msbuild $env:LUMEN_VCXPROJ /nologo /m /v:m "/p:Configuration=Runtime Unicode" /p:Platform=Win32 "/p:SolutionDir=$env:LUMEN_SOLUTION_DIR" /fl "/flp:logfile=$env:OUT\logs\msbuild-runtime.log;verbosity=normal"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Collect the .mfx files
+        shell: pwsh
+        run: |
+          $dist = "$env:GITHUB_WORKSPACE\dist"
+          New-Item -ItemType Directory $dist -Force | Out-Null
+          $found = Get-ChildItem $env:RUNNER_TEMP\sdk -Recurse -Filter *.mfx -ErrorAction SilentlyContinue
+          if (-not $found) { Write-Error 'The build produced no .mfx files'; exit 1 }
+          foreach ($f in $found) {
+            $i = $f.FullName.LastIndexOf('\MFX\')
+            $dest = if ($i -ge 0) { Join-Path $dist $f.FullName.Substring($i + 5) } else { Join-Path $dist $f.Name }
+            New-Item -ItemType Directory (Split-Path $dest) -Force | Out-Null
+            Copy-Item $f.FullName $dest
+          }
+          Copy-Item docs\INSTALL.txt $dist
+          Copy-Item "$env:OUT\API.md" $dist -ErrorAction SilentlyContinue
+          Get-ChildItem $dist -Recurse -File | ForEach-Object { $_.FullName.Substring($dist.Length + 1) }
+
+      - name: Upload the extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-extension
+          path: dist
+          if-no-files-found: error
+
+      # Always uploaded, even when the build fails: build logs, the untouched template files and the
+      # assembled sources. Attach these (or paste the log) when asking for a fix.
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-build-diagnostics
+          path: |
+            out
+            ${{ env.LUMEN_PROJECT_DIR }}/*.cpp
+            ${{ env.LUMEN_PROJECT_DIR }}/*.hpp
+            ${{ env.LUMEN_PROJECT_DIR }}/*.inc
+            ${{ env.LUMEN_PROJECT_DIR }}/*.json
+            ${{ env.LUMEN_PROJECT_DIR }}/*.vcxproj
+            ${{ env.LUMEN_PROJECT_DIR }}/*.vcxitems
+            ${{ env.LUMEN_PROJECT_DIR }}/*.ini
+          if-no-files-found: warn
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Lumen-extension
+          path: Lumen
+      - name: Zip
+        run: zip -r "Lumen-${GITHUB_REF_NAME}.zip" Lumen
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: Lumen-*.zip
