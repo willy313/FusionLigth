@@ -81,6 +81,59 @@ PROPERTIES = [
 # Quality default index 1 = Half. The "Full" setting avoids stretching, useful when testing.
 
 
+def load_jsonc(text):
+    """Parse JSON that may contain // and /* */ comments and trailing commas (DarkEdif's DarkExt.json does)."""
+    text = text.lstrip("\ufeff")
+    out, i, n, in_str = [], 0, len(text), False
+    while i < n:                                   # pass 1: strip comments, leave strings alone
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1]); i += 2; continue
+            if c == '"':
+                in_str = False
+            i += 1; continue
+        if c == '"':
+            in_str = True; out.append(c); i += 1; continue
+        if c == "/" and text[i + 1:i + 2] == "/":
+            while i < n and text[i] not in "\r\n":
+                i += 1
+            continue
+        if c == "/" and text[i + 1:i + 2] == "*":
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        out.append(c); i += 1
+    s = "".join(out)
+    out, i, n, in_str = [], 0, len(s), False
+    while i < n:                                   # pass 2: drop trailing commas
+        c = s[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(s[i + 1]); i += 2; continue
+            if c == '"':
+                in_str = False
+            i += 1; continue
+        if c == '"':
+            in_str = True
+        elif c == ",":
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            if j < n and s[j] in "}]":
+                i += 1; continue
+        out.append(c); i += 1
+    s = "".join(out)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError as e:
+        lines = s.split("\n")
+        ctx = "\n".join(lines[max(0, e.lineno - 3):e.lineno + 2])
+        sys.exit("Could not parse the template DarkExt.json (%s). Context after comment removal:\n%s" % (e, ctx))
+
+
 def menu(entries, group_of):
     """Nested menu in DarkEdif format: ["Group", [id, "Name"], ...] per group, keeping first-seen group order."""
     groups, order = {}, []
@@ -242,6 +295,9 @@ def selfcheck(root):
             errs.append("expression %s title must end with '('" % e[0])
         if e[2] == T and not e[1].endswith("$("):
             errs.append("text expression %s should end with '$('" % e[0])
+    sample = '{ // c\n\t"a": "x // not a comment, ]",\n\t/* block */ "b": [1, 2,],\n}\n'
+    if load_jsonc(sample) != {"a": "x // not a comment, ]", "b": [1, 2]}:
+        errs.append("load_jsonc does not handle comments / trailing commas correctly")
     j = build_json(FAKE_TEMPLATE)
     for key, lst in (("ActionMenu", ACTIONS), ("ConditionMenu", CONDITIONS), ("ExpressionMenu", EXPRESSIONS)):
         ids = [item[0] for grp in j[key] for item in grp[1:]]
@@ -284,7 +340,7 @@ def main():
     if not (a.template and a.out):
         ap.error("--template and --out are required")
     with open(a.template, encoding="utf-8-sig") as f:
-        tmpl = json.load(f)
+        tmpl = load_jsonc(f.read())
     print("Template property types:", [p.get("Type") for p in tmpl.get("Properties", []) if isinstance(p, dict)])
     print("Template About keys:", list(tmpl.get("About", {}).keys()))
     os.makedirs(a.out, exist_ok=True)
