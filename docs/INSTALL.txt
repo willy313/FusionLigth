@@ -1,0 +1,33 @@
+Installing Lumen in Clickteam Fusion 2.5
+=========================================
+
+Close Fusion first. Then copy the two files, keeping their folder names:
+
+  Extensions\Unicode\Lumen.mfx        ->  <Fusion folder>\Extensions\Unicode\
+  Data\Runtime\Unicode\Lumen.mfx      ->  <Fusion folder>\Data\Runtime\Unicode\
+
+(<Fusion folder> is usually C:\Program Files (x86)\Clickteam Fusion 2.5 or the Steam equivalent.)
+Windows may ask for administrator rights. If files come out of a downloaded zip, right-click each
+one, Properties, tick Unblock.
+
+Start Fusion: "Lumen" appears in the Insert Object dialog.
+
+First test (about two minutes)
+------------------------------
+1. Set Display mode to Direct3D 11 (Application properties, Runtime options).
+2. Insert a Lumen object and drag it to cover the whole window (for example 640 x 480 at 0,0).
+   Place it on a layer ABOVE the objects you want darkened.
+3. Events:
+     Start of frame:  Lumen: Set ambient light to 0
+                      Lumen: Create or update light 1 at (320, 240), radius 200, brightness 1, on layer 1
+     Always:          Lumen: Set light 1 position to (XMouse, YMouse)
+4. Run. Expect darkness with a soft circle of light following the mouse.
+
+What to report back
+-------------------
+ * It works / it crashes / it is not visible. For a crash, the exact text of the error box.
+ * The text of  Lumen.DebugInfo$(  shown in a String object (it lists timings and counts).
+ * Try "Set lightmap pixel size" with 1, 2, 4. Say which of them work.
+ * If the light looks inverted (dark circle on bright ground) or the gradient looks wrong, run
+   "Debug: set shade levels to 16, invert blend: 1" and say whether that fixes it.
+ * Frame rate with 1 light and with 50 lights.
