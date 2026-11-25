@@ -14,14 +14,6 @@ static_assert(sizeof(TCHAR) == sizeof(wchar_t), "Lumen is built for the Unicode 
 // Surface, SurfaceFill, ColorRGB, BlitOptions and BlitOperation live in the DarkEdif namespace in this SDK.
 using namespace DarkEdif;
 
-// Works whether CreateFromMainWindow() hands back a pointer, a smart pointer or a value.
-template <class T> static auto deref(T& t, int) -> decltype(*t) { return *t; }
-template <class T> static T& deref(T& t, long) { return t; }
-
-// SetPixel's exact parameter list is not known (the SDK rejected the 4-argument form): use whichever form exists.
-template <class S, class C> static auto setPx(S& s, int x, int y, C c, int) -> decltype(s.SetPixel(x, y, c, false), void()) { s.SetPixel(x, y, c, false); }
-template <class S, class C> static auto setPx(S& s, int x, int y, C c, long) -> decltype(s.SetPixel(x, y, c), void()) { s.SetPixel(x, y, c); }
-
 // ------------------------------------------------------------------ graphics
 
 struct LumenGfx {
@@ -74,7 +66,7 @@ static void rebuildBands(Extension& e, LumenState& S) {
 			const int a = (int)(px[(size_t)y * mw + x] >> 24);
 			const int b = (a * K + 127) / 255;
 			if (b <= 0) continue;
-			setPx(*G.bands[b], x, y, black, 0);
+			G.bands[b]->SetPixel(Point(x, y), black, false);   // SetPixel defaults includeAlpha to true; these surfaces have no alpha
 			++G.count[b];
 			G.dirty[b] = 1;
 		}
@@ -166,24 +158,27 @@ REFLAG Extension::LumenDisplay() {
 	if (!S.gfx || S.gfx->bands.empty()) return (REFLAG)0;
 	LumenGfx& G = *S.gfx;
 
-	auto dest = Surface::CreateFromMainWindow(rhPtr);   // DarkEdif::Surface
-	auto& D = deref(dest, 0);
+	Surface& D = Surface::CreateFromMainWindow(rhPtr);   // returns a reference to Fusion's frame surface
 	// Camera read at draw time (no one-tick lag); the lightmap itself was built in Handle().
 	const int x0 = S.engine.originPxX() - rhPtr->get_WindowX(), y0 = S.engine.originPxY() - rhPtr->get_WindowY();
 	const int x1 = x0 + S.engine.blitWidth(), y1 = y0 + S.engine.blitHeight();
 	const int K = G.levels;
 	S.bandBlits = 0;
+	// Rect(l, t, r, b) rejects negative coordinates unless allowNeg is true, and our destination can start off screen.
+	const Rect src(0, 0, G.mw, G.mh);
+	const Rect dst(x0, y0, x1, y1, true);
+	const BlitOptions flags = S.copyAlpha ? BlitOptions::CopyAlpha : BlitOptions::None;
 	for (int b = 1; b <= K; ++b) {
 		if (!G.count[b]) continue;
 		++S.bandBlits;
 		if (b == K) {   // fully dark: plain colour-keyed copy, independent of blend-coefficient direction
-			G.bands[b]->CopySection({ 0, 0, G.mw, G.mh }, D, { x0, y0, x1, y1 }, true, BlitOptions::None, BlitOperation::Copy, 0);
+			G.bands[b]->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
 			continue;
 		}
 		const double opacity = (double)b / K;
 		int coef = (int)std::lround((S.invertBlend ? opacity : 1.0 - opacity) * 128.0);
 		coef = (std::max)(0, (std::min)(128, coef));
-		G.bands[b]->CopySection({ 0, 0, G.mw, G.mh }, D, { x0, y0, x1, y1 }, true, BlitOptions::None, BlitOperation::Blend, coef);
+		G.bands[b]->CopySection(src, D, dst, true, flags, BlitOperation::Blend, (std::uint8_t)coef);
 	}
 	return (REFLAG)0;
 }
@@ -273,9 +268,10 @@ void Extension::RemoveShadowCasterObject(int p0) {
 
 void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->bandsDirty = true; lx->forceRedraw = true; }
 
-void Extension::SetRenderOptions(int p0, int p1) {
+void Extension::SetRenderOptions(int p0, int p1, int p2) {
 	lx->shadeLevels = (std::max)(2, (std::min)(64, p0));
 	lx->invertBlend = p1 != 0;
+	lx->copyAlpha = p2 != 0;
 	lx->bandsDirty = true; lx->forceRedraw = true;
 }
 

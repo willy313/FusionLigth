@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace DarkEdif { std::vector<Blit> g_blits; }
+namespace DarkEdif { std::vector<Blit> g_blits; int g_negViolations = 0; bool g_lastSetPixelIncludedAlpha = false; }
 using DarkEdif::g_blits;
 using DarkEdif::BlitOperation;
 static int g_checks = 0, g_fail = 0;
@@ -42,6 +42,8 @@ int main() {
 		CHECK(b.srcW == e.lx->engine.mapWidth() && b.srcH == e.lx->engine.mapHeight());
 	}
 	CHECK(sawCopy && sawBlend);                                // fully dark band + partial bands
+	CHECK(g_blits[0].flags == DarkEdif::BlitOptions::CopyAlpha);   // SDK default flag unless changed
+	CHECK(!DarkEdif::g_lastSetPixelIncludedAlpha);             // SetPixel always called with includeAlpha=false
 	CHECK(e.LumenHandle() == REFLAG(0));                       // nothing changed
 	rh.winX = 3;                                               // camera moved: redraw requested
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
@@ -70,8 +72,8 @@ int main() {
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
 
 	// debug options, quality, errors
-	e.SetRenderOptions(8, 1); CHECK(e.lx->shadeLevels == 8 && e.lx->invertBlend);
-	e.SetRenderOptions(1000, 0); CHECK(e.lx->shadeLevels == 64);
+	e.SetRenderOptions(8, 1, 0); CHECK(e.lx->shadeLevels == 8 && e.lx->invertBlend && !e.lx->copyAlpha);
+	e.SetRenderOptions(1000, 0, 1); CHECK(e.lx->shadeLevels == 64 && e.lx->copyAlpha);
 	e.SetQuality(4); CHECK(e.LumenHandle() == REFLAG::DISPLAY && e.lx->engine.settings().divisor == 4);
 	e.LumenDisplay();
 	e.SetLightRadius(999, 10);
@@ -93,6 +95,7 @@ int main() {
 	e.CreateLightOnObject(5, 1, 90, 1.0f, 1, 0, 0);
 	CHECK(!e.LightExists(5) && std::wcsstr(e.LastError(), L"not enabled") != nullptr);
 #endif
+	CHECK(DarkEdif::g_negViolations == 0);                     // negative rect origins are always passed with allowNeg
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;
 }

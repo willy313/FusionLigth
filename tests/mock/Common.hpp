@@ -31,25 +31,44 @@ struct RunHeader {
 };
 
 namespace DarkEdif {
-using Colour = uint32_t;
-inline Colour ColorRGB(int r, int g, int b) { return 0xFF000000u | (b << 16) | (g << 8) | r; }
-struct SurfaceFill { Colour c; static SurfaceFill Solid(Colour c) { return { c }; } };
-enum class BlitOptions { None };
-enum class BlitOperation { Copy, Blend };
-struct Rect { long left, top, right, bottom; };
-
-struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; };
-extern std::vector<DarkEdif::Blit> g_blits;
-struct Surface {
-	int w, h; long pixelsSet = 0;
-	Surface(RunHeader*, bool, bool, int w_, int h_, bool) : w(w_), h(h_) {}
-	void FillImageWith(SurfaceFill) {}
-	void SetTransparencyToColor(Colour) {}
-	void SetPixel(int, int, Colour) { ++pixelsSet; }   // the real SDK has no 4-argument form
-	void CopySection(Rect s, Surface&, Rect d, bool, BlitOptions, BlitOperation op, int coef) {
-		g_blits.push_back({ (int)(s.right - s.left), (int)(s.bottom - s.top), (int)d.left, (int)d.top, (int)d.right, (int)d.bottom, op, coef });
+// Mirrors the real SDK (SurfaceMultiPlat.hpp): Point and Rect reject negatives unless allowNeg; SetPixel takes a Point;
+// CreateFromMainWindow returns a reference; Surface is not copyable.
+extern int g_negViolations;
+struct Point {
+	std::int32_t x = 0, y = 0;
+	Point() = default;
+	Point(std::int32_t x_, std::int32_t y_, bool allowNeg = false) : x(x_), y(y_) { if (!allowNeg && (x < 0 || y < 0)) ++g_negViolations; }
+};
+struct Rect {
+	std::int32_t left = 0, top = 0, right = 0, bottom = 0;
+	Rect() = default;
+	Rect(std::int32_t r, std::int32_t b) : right(r), bottom(b) {}
+	Rect(std::int32_t l, std::int32_t t, std::int32_t r, std::int32_t b, bool allowNeg = false) : left(l), top(t), right(r), bottom(b) {
+		if (!allowNeg && (l < 0 || t < 0)) ++g_negViolations;
 	}
-	static Surface* CreateFromMainWindow(RunHeader*) { static Surface s(nullptr, false, false, 640, 480, false); return &s; }
+};
+constexpr inline std::uint32_t ColorRGB(std::uint8_t r, std::uint8_t g, std::uint8_t b) { return 0xFF000000u | (b << 16) | (g << 8) | r; }
+struct SurfaceFill { std::uint32_t c; static SurfaceFill Solid(std::uint32_t c) { return { c }; } };
+enum class BlitOptions { None = 0, AntiAliasing = 1, CopyAlpha = 2 };
+enum class BlitOperation { Copy, Blend };
+
+struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; BlitOptions flags; };
+extern std::vector<Blit> g_blits;
+extern bool g_lastSetPixelIncludedAlpha;
+struct Surface {
+	std::size_t w, h; long pixelsSet = 0;
+	Surface(RunHeader*, bool, bool, std::size_t w_, std::size_t h_, bool) : w(w_), h(h_) {}
+	Surface(const Surface&) = delete;
+	Surface(Surface&&) = delete;
+	bool FillImageWith(const SurfaceFill&) { return true; }
+	bool SetTransparencyToColor(std::uint32_t) { return true; }
+	void SetPixel(Point, std::uint32_t, bool includeAlpha = true) { ++pixelsSet; if (includeAlpha) g_lastSetPixelIncludedAlpha = true; }
+	bool CopySection(Rect s, Surface&, Rect d, bool = true, BlitOptions f = BlitOptions::CopyAlpha,
+		BlitOperation op = BlitOperation::Copy, std::uint8_t coef = 0) const {
+		g_blits.push_back({ s.right - s.left, s.bottom - s.top, d.left, d.top, d.right, d.bottom, op, coef, f });
+		return true;
+	}
+	static Surface& CreateFromMainWindow(RunHeader*) { static Surface s(nullptr, false, false, 640, 480, false); return s; }
 };
 } // namespace DarkEdif
 

@@ -19,6 +19,7 @@ struct LumenState {
 	int lastCamX = -999999, lastCamY = -999999;
 	int shadeLevels = 16;            // darkness is quantised into this many opacity bands
 	bool invertBlend = false;        // flips the Blend coefficient direction if Fusion's is reversed
+	bool copyAlpha = true;           // BlitOptions::CopyAlpha (the SDK default) versus None
 	int lastLightId = 0, nextAutoId = 1;
 	std::string lastError;
 	std::wstring scratchW;           // backing store for text expressions

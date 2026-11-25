@@ -95,13 +95,17 @@ def main():
     # SDK headers for diagnosis: the exact Surface / run-header API this build compiles against
     hdr_out = os.path.join(a.out, "sdk-headers")
     os.makedirs(hdr_out, exist_ok=True)
-    wanted = {"SurfaceMultiPlat.hpp", "MMFWindowsMasterHeader.hpp", "Edif.Runtime.hpp", "DarkEdif.hpp"}
     for d, _s, fs in os.walk(os.path.join(de, "Inc")):
         for n in fs:
-            if n in wanted:
-                shutil.copy(os.path.join(d, n), hdr_out)
-    surf_h = os.path.join(hdr_out, "SurfaceMultiPlat.hpp")
-    if os.path.exists(surf_h):
+            if n.lower().endswith((".hpp", ".h")):
+                dest_dir = os.path.join(hdr_out, os.path.relpath(d, os.path.join(de, "Inc")))
+                os.makedirs(dest_dir, exist_ok=True)
+                shutil.copy(os.path.join(d, n), dest_dir)
+    surf_h = None
+    for d, _s, fs in os.walk(hdr_out):
+        if "SurfaceMultiPlat.hpp" in fs:
+            surf_h = os.path.join(d, "SurfaceMultiPlat.hpp")
+    if surf_h and os.path.exists(surf_h):
         print("---- SurfaceMultiPlat.hpp: declarations Lumen uses")
         for i, ln in enumerate(read(surf_h).split("\n"), 1):
             if re.search(r"\b(SetPixel|GetPixel|CopySection|CreateFromMainWindow|FillImageWith|SetTransparencyToColor|enum class Blit\w+|class Surface|struct Rect)\b", ln):

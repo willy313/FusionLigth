@@ -49,8 +49,8 @@ ACTIONS = [
   [(I, "Object (use Fixed(\"object\"))"), (I, "Layer")], "Shadows"),
  ("RemoveShadowCasterObject", "Stop object %0 casting shadows", [(I, "Object (use Fixed(\"object\"))")], "Shadows"),
  ("SetQuality", "Set lightmap pixel size to %0 x %0 screen pixels (1 = sharpest, 4 = fast)", [(I, "Pixel size (1-16)")], "Quality"),
- ("SetRenderOptions", "Debug: set shade levels to %0, invert blend: %1",
-  [(I, "Shade levels (2-64)"), (I, "Invert blend coefficient (1/0)")], "Quality"),
+ ("SetRenderOptions", "Debug: set shade levels to %0, invert blend: %1, copy alpha: %2",
+  [(I, "Shade levels (2-64)"), (I, "Invert blend coefficient (1/0)"), (I, "Copy alpha blit flag (1/0)")], "Quality"),
 ]
 
 CONDITIONS = [

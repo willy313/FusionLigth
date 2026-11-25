@@ -72,9 +72,10 @@ Generated from `extension/gen_ext_json.py`. IDs are list positions and never cha
 ### Quality
 - **Set lightmap pixel size to <Pixel size> x <Pixel size> screen pixels (1 = sharpest, 4 = fast)**
   - Integer: Pixel size (1-16)
-- **Debug: set shade levels to <Shade levels>, invert blend: <Invert blend coefficient>**
+- **Debug: set shade levels to <Shade levels>, invert blend: <Invert blend coefficient>, copy alpha: <Copy alpha blit flag>**
   - Integer: Shade levels (2-64)
   - Integer: Invert blend coefficient (1/0)
+  - Integer: Copy alpha blit flag (1/0)
 
 ## Conditions
 
@@ -96,4 +97,4 @@ Generated from `extension/gen_ext_json.py`. IDs are list positions and never cha
 ## Editor properties
 
 - **Backdrop obstacles**: Backdrop objects with an obstacle type cast shadows (reserved; imported in a later version) (default: True)
-- **Quality**: Lightmap resolution: lower is faster, higher has sharper shadows (default: Half)
+- **Pixel size**: Lightmap pixel size in screen pixels (1-8). 1 is sharpest and slowest, 4 is a good fast setting (default: 2)
