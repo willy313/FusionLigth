@@ -57,7 +57,7 @@ def main():
     put(t + "/Edittime.cpp", '#include "Common.hpp"\n#error Add your drawing tech here\nint x;\n')
     put(t + "/DarkEdif Template.Windows.vcxproj", VCX); put(t + "/DarkEdif Template.Shared.vcxitems", ITEMS)
     put(t + "/FusionSDKConfig.ini", "[x]\nWindowsXPCompatibility = true\n")
-    put(t + "/DarkExt.json", json.dumps(JSON)); put(t + "/DarkExt.PostMinify.json", "{}")
+    put(t + "/DarkExt.json", "{\n\t// DarkEdif style: comments and trailing commas\n" + json.dumps(JSON, indent="\t")[2:-2] + ",\n\t/* end */\n}\n"); put(t + "/DarkExt.PostMinify.json", "{}")
     put(t + "/Android/readme.txt", "x")
     out = os.path.join(tmp, "out")
     subprocess.check_call([sys.executable, os.path.join(REPO, "ci", "assemble.py"), "--sdk", os.path.join(tmp, "sdk"),
