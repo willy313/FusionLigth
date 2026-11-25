@@ -284,6 +284,23 @@ def main():
     subprocess.check_call([sys.executable, os.path.join(a.repo, "extension", "gen_ext_json.py"),
                            "--template", tj, "--out", proj, "--docs", os.path.join(a.out, "API.md")])
 
+    # The SDK's DarkEdifPreBuildTool scans Extension.cpp for literal LinkAction/LinkCondition/LinkExpression lines
+    # (it fails with "0 ACE regex matches" if they are behind an #include), so the generated text is written inline.
+    def indent(text):
+        return "\n".join(("\t" + ln if ln.strip() else ln) for ln in text.rstrip("\n").split("\n")) + "\n"
+    ctor_txt = read(os.path.join(proj, "LumenCtor.inc"))
+    mem_txt = read(os.path.join(proj, "LumenMembers.inc"))
+    t = read(cpp)
+    if '\t#include "LumenCtor.inc"' not in t:
+        die("internal: constructor include marker missing from Extension.cpp")
+    write(cpp, t.replace('\t#include "LumenCtor.inc"\n', indent(ctor_txt), 1).replace('\t#include "LumenCtor.inc"', indent(ctor_txt), 1))
+    t = read(hpp)
+    if '\t#include "LumenMembers.inc"' not in t:
+        die("internal: members include marker missing from Extension.hpp")
+    write(hpp, t.replace('\t#include "LumenMembers.inc"\n', indent(mem_txt), 1).replace('\t#include "LumenMembers.inc"', indent(mem_txt), 1))
+    n_links = len(re.findall(r"Link(?:Action|Condition|Expression)\s*\(\s*\d+\s*,\s*\w+\s*\)", read(cpp)))
+    print("inlined %d Link* calls into Extension.cpp and the member declarations into Extension.hpp" % n_links)
+
     for var, val in (("LUMEN_PROJECT_DIR", proj), ("LUMEN_VCXPROJ", vproj), ("LUMEN_SDK_DARKEDIF", de)):
         print("%s=%s" % (var, val))
         if os.environ.get("GITHUB_ENV"):

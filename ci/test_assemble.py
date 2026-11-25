@@ -2,7 +2,7 @@
 """Runs assemble.py against a mock DarkEdif template, to test the script's mechanics (anchors, brace
 matching, renames, generated files). It cannot prove the real template matches; the CI uploads the real
 template files as 'template-reference' for that."""
-import os, shutil, subprocess, sys, tempfile, json
+import os, re, shutil, subprocess, sys, tempfile, json
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HPP = '''#pragma once
@@ -96,9 +96,13 @@ def run(variant):
     def need(c, m):
         if not c: errs.append("[%s] %s" % (variant, m))
     hpp, cpp = rd("Extension.hpp"), rd("Extension.cpp")
-    need('#include "LumenState.hpp"' in hpp and '#include "LumenMembers.inc"' in hpp, "hpp includes")
+    need('#include "LumenState.hpp"' in hpp and "void SetAmbient(float p0);" in hpp and "LumenMembers.inc" not in hpp, "hpp members inlined")
     need("OEFLAGS::MANUAL_DISPLAY_EXT" in hpp and "OEPREFS::BACK_SAVE" in hpp and "VALUE_CAN_BE_PROTECTED" not in hpp and "OEFLAGS::NONE" not in hpp, "oeflags")
-    need(cpp.count("LumenCtor.inc") == 1 and "LinkAction(0, ActionExample)" not in cpp and "LinkExpression(1, HelloWorld)" not in cpp, "ctor include")
+    need("LumenCtor.inc" not in cpp and "LinkAction(0, ActionExample)" not in cpp and "LinkExpression(1, HelloWorld)" not in cpp, "ctor include inlined")
+    # the SDK's DarkEdifPreBuildTool scans Extension.cpp for literal Link* calls: emulate that scan
+    links = re.findall(r"Link(Action|Condition|Expression)\s*\(\s*(\d+)\s*,\s*(\w+)\s*\)", cpp)
+    need(len(links) == 18 + 2 + 9, "pre-build tool would find %d Link calls, expected 29" % len(links))
+    need(("Action", "0", "SetAmbient") in links and ("Expression", "8", "LastError") in links, "Link calls content")
     need("LumenHandle()" in cpp and "if (x)" not in cpp and "ONE_SHOT" not in cpp, "handle body")
     if variant == "A":
         need("\tLumenDisplay();" in cpp and "void Extension::Display()" in cpp, "display body (void in the real template)")
