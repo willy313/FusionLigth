@@ -45,7 +45,7 @@ struct Surface {
 	Surface(RunHeader*, bool, bool, int w_, int h_, bool) : w(w_), h(h_) {}
 	void FillImageWith(SurfaceFill) {}
 	void SetTransparencyToColor(Colour) {}
-	void SetPixel(int, int, Colour, bool) { ++pixelsSet; }
+	void SetPixel(int, int, Colour) { ++pixelsSet; }   // the real SDK has no 4-argument form
 	void CopySection(Rect s, Surface&, Rect d, bool, BlitOptions, BlitOperation op, int coef) {
 		g_blits.push_back({ (int)(s.right - s.left), (int)(s.bottom - s.top), (int)d.left, (int)d.top, (int)d.right, (int)d.bottom, op, coef });
 	}

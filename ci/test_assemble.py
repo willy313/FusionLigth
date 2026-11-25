@@ -79,7 +79,10 @@ def run(variant):
     put(t + "/Extension.hpp", hpp); put(t + "/Extension.cpp", cpp)
     if extra_cpp:
         put(t + "/Runtime.cpp", extra_cpp)
-    put(t + "/Edittime.cpp", '#include "Common.hpp"\n#error Add your drawing tech here\nint x;\n')
+    if variant == "A":
+        put(t + "/Edittime.cpp", open(os.path.join(real, "Edittime.cpp"), encoding="utf-8").read())
+    else:
+        put(t + "/Edittime.cpp", '#include "Common.hpp"\n#error Add your drawing tech here\nint x;\n')
     put(t + "/DarkEdif Template.Windows.vcxproj", VCX); put(t + "/DarkEdif Template.Shared.vcxitems", ITEMS)
     put(t + "/DarkExt.json", raw_json if raw_json else "{\n\t// DarkEdif style: comments and trailing commas\n" + json.dumps(js, indent="\t")[2:-2] + ",\n\t/* end */\n}\n")
     put(t + "/DarkExt.PostMinify.json", "{}")
@@ -105,7 +108,9 @@ def run(variant):
     if variant == "C":
         need("short Extension::Display( void )" in rd("Runtime.cpp") and "static_cast<short>(LumenDisplay())" in rd("Runtime.cpp"), "display in other file")
         need("LumenDisplay" not in cpp, "display not duplicated")
-    need("#error" not in rd("Edittime.cpp"), "#error removed")
+    need("#error" not in rd("Edittime.cpp") and "frameSurf.FillImageWith" not in rd("Edittime.cpp"), "#error block removed")
+    if variant == "A":
+        need("CopyToPoint(frameSurf" in rd("Edittime.cpp") and "EditorDisplay" in rd("Edittime.cpp"), "icon drawing kept")
     need("WindowsXPCompatibility = false" in open(os.path.join(tmp, "sdk", "FusionSDKConfig.ini")).read(), "ini in SDK root")
     need(not os.path.exists(os.path.join(p, "DarkExt.PostMinify.json")), "stale PostMinify removed")
     need(os.path.exists(os.path.join(p, "Lumen.Windows.vcxproj")) and os.path.exists(os.path.join(p, "Lumen.Shared.vcxitems")), "renamed files")

@@ -92,6 +92,21 @@ def main():
         if os.path.isfile(p) and os.path.splitext(n)[1].lower() in {".cpp", ".hpp", ".h", ".json", ".ini", ".vcxproj", ".vcxitems", ".props", ".filters"}:
             shutil.copy(p, ref)
 
+    # SDK headers for diagnosis: the exact Surface / run-header API this build compiles against
+    hdr_out = os.path.join(a.out, "sdk-headers")
+    os.makedirs(hdr_out, exist_ok=True)
+    wanted = {"SurfaceMultiPlat.hpp", "MMFWindowsMasterHeader.hpp", "Edif.Runtime.hpp", "DarkEdif.hpp"}
+    for d, _s, fs in os.walk(os.path.join(de, "Inc")):
+        for n in fs:
+            if n in wanted:
+                shutil.copy(os.path.join(d, n), hdr_out)
+    surf_h = os.path.join(hdr_out, "SurfaceMultiPlat.hpp")
+    if os.path.exists(surf_h):
+        print("---- SurfaceMultiPlat.hpp: declarations Lumen uses")
+        for i, ln in enumerate(read(surf_h).split("\n"), 1):
+            if re.search(r"\b(SetPixel|GetPixel|CopySection|CreateFromMainWindow|FillImageWith|SetTransparencyToColor|enum class Blit\w+|class Surface|struct Rect)\b", ln):
+                print("%5d| %s" % (i, ln.strip()[:200]))
+
     # 1. copy + rename
     shutil.copytree(tmpl, proj)
     for d, _s, fs in os.walk(proj):
@@ -210,7 +225,13 @@ def main():
     if et:
         show(et, r"#\s*error|SetEditSize|GetObjectRect|objSize|EditorDisplay|DrawRectangle|DARKEDIF_DISPLAY")
         t = read(et)
-        t2, n = re.subn(r"^[ \t]*#\s*error\s+Add your drawing tech here[^\n]*\n?", "", t, flags=re.M)
+        # The template's block is:  #if ... IS_DARKEDIF_TEMPLATE==0 / #error ... / frameSurf.FillImageWith(...) / #endif
+        # Removing only the #error would leave a FillImageWith on the editor frame (fills the whole editor / crashes per the
+        # field notes), so the whole block goes: the editor shows Fusion's own icon.
+        t2, n = re.subn(r"(?ms)^[ \t]*#\s*if[^\n]*IS_DARKEDIF_TEMPLATE\s*==\s*0[^\n]*\n.*?^[ \t]*#\s*endif[^\n]*\n",
+                        "\t// Lumen: nothing is drawn in the editor; Fusion shows the extension icon.\n", t, count=1)
+        if not n:   # other template versions: at least remove the #error line
+            t2, n = re.subn(r"^[ \t]*#\s*error\s+Add your drawing tech here[^\n]*\n?", "", t, flags=re.M)
         if n:
             write(et, t2)
         print("Edittime.cpp: removed %d '#error' line(s)" % n)

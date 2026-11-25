@@ -18,6 +18,10 @@ using namespace DarkEdif;
 template <class T> static auto deref(T& t, int) -> decltype(*t) { return *t; }
 template <class T> static T& deref(T& t, long) { return t; }
 
+// SetPixel's exact parameter list is not known (the SDK rejected the 4-argument form): use whichever form exists.
+template <class S, class C> static auto setPx(S& s, int x, int y, C c, int) -> decltype(s.SetPixel(x, y, c, false), void()) { s.SetPixel(x, y, c, false); }
+template <class S, class C> static auto setPx(S& s, int x, int y, C c, long) -> decltype(s.SetPixel(x, y, c), void()) { s.SetPixel(x, y, c); }
+
 // ------------------------------------------------------------------ graphics
 
 struct LumenGfx {
@@ -70,7 +74,7 @@ static void rebuildBands(Extension& e, LumenState& S) {
 			const int a = (int)(px[(size_t)y * mw + x] >> 24);
 			const int b = (a * K + 127) / 255;
 			if (b <= 0) continue;
-			G.bands[b]->SetPixel(x, y, black, false);
+			setPx(*G.bands[b], x, y, black, 0);
 			++G.count[b];
 			G.dirty[b] = 1;
 		}
