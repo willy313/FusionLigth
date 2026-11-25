@@ -161,40 +161,68 @@ def clone_params(proto_params, params):
     return out
 
 
+def K(d, name):
+    """The key in d that matches `name` ignoring case, else `name` itself."""
+    for k in d:
+        if isinstance(k, str) and k.lower() == name.lower():
+            return k
+    return name
+
+
+def outline(tmpl):
+    """Print the template's structure so a mismatch can be diagnosed from the CI log alone."""
+    print("---- template DarkExt.json outline (top-level keys: %s)" % list(tmpl.keys()))
+    for k, v in tmpl.items():
+        if isinstance(v, dict):
+            print("  %s: object, keys=%s" % (k, list(v.keys())[:20]))
+        elif isinstance(v, list):
+            first = json.dumps(v[0])[:400] if v else None
+            print("  %s: list(%d), first=%s" % (k, len(v), first))
+        else:
+            print("  %s: %s" % (k, json.dumps(v)[:100]))
+    print("----")
+
+
 def proto(lst):
     return copy.deepcopy(lst[0]) if lst else {}
 
 
 def build_json(tmpl):
     j = copy.deepcopy(tmpl)
-    about = j.setdefault("About", {})
+    ak = K(j, "About")
+    if not isinstance(j.get(ak), dict):
+        j[ak] = {}
+    about = j[ak]
     for k, v in (("Name", NAME), ("Identifier", IDENT), ("Author", AUTHOR), ("Comment", COMMENT)):
-        about[k] = v
+        about[K(about, k)] = v
     for k in list(j.keys()):                      # some template versions keep these at top level
-        if k.lower() in ("identifier", "name") and k not in ("About",):
+        if isinstance(k, str) and k.lower() in ("identifier", "name") and k != ak:
             j[k] = IDENT if k.lower() == "identifier" else NAME
 
-    pa, pc, pe = proto(tmpl.get("Actions", [])), proto(tmpl.get("Conditions", [])), proto(tmpl.get("Expressions", []))
+    def lst(name):
+        v = tmpl.get(K(tmpl, name), [])
+        return v if isinstance(v, list) else []
+    pa, pc, pe = proto(lst("Actions")), proto(lst("Conditions")), proto(lst("Expressions"))
     acts, conds, exprs = [], [], []
     for fn, title, params, _g in ACTIONS:
-        a = copy.deepcopy(pa); a["Title"] = title
-        a["Parameters"] = clone_params(pa.get("Parameters", []), params); acts.append(a)
+        a = copy.deepcopy(pa); a[K(a, "Title")] = title
+        a[K(a, "Parameters")] = clone_params(pa.get(K(pa, "Parameters"), []), params); acts.append(a)
     for fn, title, params, trig, _g in CONDITIONS:
-        c = copy.deepcopy(pc); c["Title"] = title; c["Triggered"] = trig
-        c["Parameters"] = clone_params(pc.get("Parameters", []), params); conds.append(c)
+        c = copy.deepcopy(pc); c[K(c, "Title")] = title; c[K(c, "Triggered")] = trig
+        c[K(c, "Parameters")] = clone_params(pc.get(K(pc, "Parameters"), []), params); conds.append(c)
     for fn, title, ret, params, _g in EXPRESSIONS:
-        e = copy.deepcopy(pe); e["Title"] = title; e["Returns"] = ret
-        e["Parameters"] = clone_params(pe.get("Parameters", []), params); exprs.append(e)
-    j["Actions"], j["Conditions"], j["Expressions"] = acts, conds, exprs
-    j["ActionMenu"] = menu(ACTIONS, lambda e: e[3])
-    j["ConditionMenu"] = menu(CONDITIONS, lambda e: e[4])
-    j["ExpressionMenu"] = menu(EXPRESSIONS, lambda e: e[4])
+        e = copy.deepcopy(pe); e[K(e, "Title")] = title; e[K(e, "Returns")] = ret
+        e[K(e, "Parameters")] = clone_params(pe.get(K(pe, "Parameters"), []), params); exprs.append(e)
+    j[K(j, "Actions")], j[K(j, "Conditions")], j[K(j, "Expressions")] = acts, conds, exprs
+    j[K(j, "ActionMenu")] = menu(ACTIONS, lambda e: e[3])
+    j[K(j, "ConditionMenu")] = menu(CONDITIONS, lambda e: e[4])
+    j[K(j, "ExpressionMenu")] = menu(EXPRESSIONS, lambda e: e[4])
 
     # Properties: clone the template's own entries per type so unknown required fields are inherited.
-    tprops = tmpl.get("Properties", [])
+    tprops = lst("Properties")
     def find(word):
         for p in tprops:
-            if isinstance(p, dict) and word in str(p.get("Type", "")).lower():
+            if isinstance(p, dict) and word in str(p.get(K(p, "Type"), "")).lower():
                 return copy.deepcopy(p)
         return None
     props = []
@@ -203,11 +231,11 @@ def build_json(tmpl):
         if p is None:
             print("WARNING: template has no %s property to copy; using best-guess schema" % kind, file=sys.stderr)
             p = {"Type": "Checkbox" if kind == "checkbox" else "Combo Box"}
-        p["Title"] = title; p["Info"] = info; p["DefaultState"] = default
+        p[K(p, "Title")] = title; p[K(p, "Info")] = info; p[K(p, "DefaultState")] = default
         if items is not None:
-            p["Items"] = items
+            p[K(p, "Items")] = items
         props.append(p)
-    j["Properties"] = props
+    j[K(j, "Properties")] = props
     return j
 
 
@@ -341,8 +369,12 @@ def main():
         ap.error("--template and --out are required")
     with open(a.template, encoding="utf-8-sig") as f:
         tmpl = load_jsonc(f.read())
-    print("Template property types:", [p.get("Type") for p in tmpl.get("Properties", []) if isinstance(p, dict)])
-    print("Template About keys:", list(tmpl.get("About", {}).keys()))
+    outline(tmpl)
+    missing = [n for n in ("Actions", "Conditions", "Expressions") if not isinstance(tmpl.get(K(tmpl, n)), list)]
+    if missing:
+        sys.exit("ERROR: the template DarkExt.json has no %s list(s), so its schema is not what this script expects. "
+                 "Refusing to generate a guessed schema. See the outline printed above (and "
+                 "template-reference/DarkExt.json in the diagnostics artifact)." % ", ".join(missing))
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "DarkExt.json"), "w", encoding="utf-8") as f:
         json.dump(build_json(tmpl), f, indent="\t")

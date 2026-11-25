@@ -106,6 +106,9 @@ def main():
             if "DarkEdif Template" in n:
                 os.rename(os.path.join(d, n), os.path.join(d, n.replace("DarkEdif Template", NAME)))
     print("copied template to", proj)
+    if os.environ.get("GITHUB_ENV"):
+        with open(os.environ["GITHUB_ENV"], "a") as f:
+            f.write("LUMEN_PROJECT_DIR=%s\n" % proj)
 
     # 3. overlay + generate
     for src in ("core/lumen.hpp", "core/lumen.cpp", "extension/LumenState.hpp", "extension/LumenExt.cpp"):
@@ -119,8 +122,26 @@ def main():
     subprocess.check_call([sys.executable, os.path.join(a.repo, "extension", "gen_ext_json.py"),
                            "--template", tj, "--out", proj, "--docs", os.path.join(a.out, "API.md")])
 
+    # Log what the template really looks like, so a failure can be diagnosed from the log alone.
+    def show(path, pats, limit=70):
+        print("---- %s: lines matching /%s/" % (os.path.relpath(path, proj), pats))
+        n = 0
+        for i, ln in enumerate(read(path).split("\n"), 1):
+            if re.search(pats, ln):
+                print("%4d| %s" % (i, ln.rstrip()))
+                n += 1
+                if n >= limit:
+                    print("     ...")
+                    break
+
+    def strip_comments(t):
+        return re.sub(r"//[^\n]*|/\*.*?\*/", "", t, flags=re.S)
+
+    print("---- template root files:", sorted(os.listdir(proj)))
+
     # 4a. Extension.hpp
     hpp = find_one(proj, "Extension.hpp") or die("Extension.hpp not found in the template")
+    show(hpp, r"OEFLAGS|OEPREFS|Handle|Display|Runtime|class Extension|GetZone|GetDisplay|GetCollision")
     t = read(hpp)
     if '#include "LumenState.hpp"' not in t:
         if re.search(r"^\s*#pragma once", t, re.M):
@@ -129,19 +150,20 @@ def main():
             t = '#include "LumenState.hpp"\n' + t
     m = re.search(r"Edif::Runtime\s+Runtime\s*;[^\n]*\n", t)
     if not m:
-        die("anchor 'Edif::Runtime Runtime;' not found in Extension.hpp; see template-reference/Extension.hpp")
+        die("anchor 'Edif::Runtime Runtime;' not found in Extension.hpp; see the lines printed above")
     t = t[:m.end()] + '\t#include "LumenMembers.inc"\n' + t[m.end():]
     t, n1 = re.subn(r"(\bOEFLAGS\s*=\s*)[^;]+;", lambda m: m.group(1) + OEFLAGS + ";", t, count=1)
     t, n2 = re.subn(r"(\bOEPREFS\s*=\s*)[^;]+;", lambda m: m.group(1) + OEPREFS + ";", t, count=1)
     if not n1:
-        die("could not find the OEFLAGS assignment in Extension.hpp; see template-reference/Extension.hpp")
+        die("could not find the OEFLAGS assignment in Extension.hpp; see the lines printed above")
     if not n2:
         print("warning: no OEPREFS assignment found in Extension.hpp (display flag left as is)")
     write(hpp, t)
     print("patched", hpp)
 
-    # 4b. Extension.cpp
+    # 4b. Extension.cpp: constructor links
     cpp = find_one(proj, "Extension.cpp") or die("Extension.cpp not found in the template")
+    show(cpp, r"Link(Action|Condition|Expression)|Extension::|GetZone|GetDisplay|GetCollision")
     lines, out, first = read(cpp).split("\n"), [], False
     for ln in lines:
         if re.match(r"^\s*Link(Action|Condition|Expression)\s*\(.*\)\s*;", ln):
@@ -151,15 +173,42 @@ def main():
             continue
         out.append(ln)
     if not first:
-        die("no LinkAction/LinkCondition/LinkExpression lines in Extension.cpp; see template-reference/Extension.cpp")
-    t = "\n".join(out)
-    for sig, body in ((r"REFLAG\s+Extension::Handle\s*\(\s*\)", "return LumenHandle();"),
-                      (r"REFLAG\s+Extension::Display\s*\(\s*\)", "return LumenDisplay();")):
-        r = replace_body(t, sig, body)
-        if r is None:
-            die("could not find/replace %s in Extension.cpp; see template-reference/Extension.cpp" % sig)
-        t = r
-    write(cpp, t)
+        die("no LinkAction/LinkCondition/LinkExpression lines in Extension.cpp; see the lines printed above")
+    write(cpp, "\n".join(out))
+
+    # 4b2. Handle() and Display(): replace the template's body wherever it is defined; if the template has no
+    # definition, add the declaration (unless already declared) and the definition.
+    cpps = [os.path.join(proj, n) for n in sorted(os.listdir(proj)) if n.lower().endswith(".cpp")]
+    cpps += [os.path.join(d, n) for d, _s, fs in os.walk(proj) for n in fs
+             if n.lower().endswith(".cpp") and os.path.join(d, n) not in cpps]
+
+    def patch_function(name, call):
+        pat = r"\bExtension::%s\s*\(\s*(?:void)?\s*\)(?=\s*(?:const\s*)?(?:noexcept\s*)?\{)" % name
+        for path in cpps:
+            t = read(path)
+            m = re.search(pat, t)
+            if not m:
+                continue
+            prefix = t[t.rfind("\n", 0, m.start()) + 1:m.start()].split()
+            ret = prefix[-1] if prefix else "REFLAG"
+            body = call + ";" if ret == "void" else "return static_cast<%s>(%s);" % (ret, call)
+            write(path, replace_body(t, pat, body))
+            print("replaced Extension::%s() body in %s (return type '%s')" % (name, os.path.relpath(path, proj), ret))
+            return
+        h = read(hpp)
+        decl = re.search(r"([\w:<>&\*]+)\s+%s\s*\(" % name, strip_comments(h))
+        ret = decl.group(1) if decl else "REFLAG"
+        if not decl:
+            h = h.replace('\t#include "LumenMembers.inc"\n', '\t#include "LumenMembers.inc"\n\t%s %s();\n' % (ret, name), 1)
+            write(hpp, h)
+        t = read(cpp)
+        body = call + ";" if ret == "void" else "return static_cast<%s>(%s);" % (ret, call)
+        write(cpp, t.rstrip("\n") + "\n\n%s Extension::%s()\n{\n\t%s\n}\n" % (ret, name, body))
+        print("template has no Extension::%s() definition; added %s%s definition to %s" % (
+            name, "" if decl else "declaration and ", ret, os.path.relpath(cpp, proj)))
+
+    patch_function("Handle", "LumenHandle()")
+    patch_function("Display", "LumenDisplay()")
     print("patched", cpp)
 
     # 4c. Edittime.cpp: remove the deliberate #error
