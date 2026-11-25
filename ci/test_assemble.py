@@ -61,6 +61,13 @@ def run(variant):
     t = os.path.join(tmp, "sdk", "DarkEdif", "DarkEdif Template")
     hpp, cpp, js = HPP, CPP, dict(JSON)
     extra_cpp = None
+    real = os.path.join(REPO, "tests", "fixtures", "template")
+    if variant == "A":      # the real template files (uploaded from a CI run)
+        hpp = open(os.path.join(real, "Extension.hpp"), encoding="utf-8").read()
+        cpp = open(os.path.join(real, "Extension.cpp"), encoding="utf-8").read()
+        raw_json = open(os.path.join(real, "DarkExt.json"), encoding="utf-8").read()
+    else:
+        raw_json = None
     if variant == "B":      # no Display() anywhere, Handle(void), lower-case JSON keys
         hpp = hpp.replace("\tREFLAG Display();\n", "")
         cpp = cpp.replace("REFLAG Extension::Handle()", "REFLAG Extension::Handle(void)")
@@ -74,8 +81,7 @@ def run(variant):
         put(t + "/Runtime.cpp", extra_cpp)
     put(t + "/Edittime.cpp", '#include "Common.hpp"\n#error Add your drawing tech here\nint x;\n')
     put(t + "/DarkEdif Template.Windows.vcxproj", VCX); put(t + "/DarkEdif Template.Shared.vcxitems", ITEMS)
-    put(t + "/FusionSDKConfig.ini", "[x]\nWindowsXPCompatibility = true\n")
-    put(t + "/DarkExt.json", "{\n\t// DarkEdif style: comments and trailing commas\n" + json.dumps(js, indent="\t")[2:-2] + ",\n\t/* end */\n}\n")
+    put(t + "/DarkExt.json", raw_json if raw_json else "{\n\t// DarkEdif style: comments and trailing commas\n" + json.dumps(js, indent="\t")[2:-2] + ",\n\t/* end */\n}\n")
     put(t + "/DarkExt.PostMinify.json", "{}")
     put(t + "/Android/readme.txt", "x")
     out = os.path.join(tmp, "out")
@@ -88,26 +94,29 @@ def run(variant):
         if not c: errs.append("[%s] %s" % (variant, m))
     hpp, cpp = rd("Extension.hpp"), rd("Extension.cpp")
     need('#include "LumenState.hpp"' in hpp and '#include "LumenMembers.inc"' in hpp, "hpp includes")
-    need("OEFLAGS::MANUAL_DISPLAY_EXT" in hpp and "OEPREFS::BACK_SAVE" in hpp and "VALUE_CAN_BE_PROTECTED" not in hpp, "oeflags")
-    need(cpp.count("LumenCtor.inc") == 1 and "LinkAction(0, ActionExample)" not in cpp, "ctor include")
+    need("OEFLAGS::MANUAL_DISPLAY_EXT" in hpp and "OEPREFS::BACK_SAVE" in hpp and "VALUE_CAN_BE_PROTECTED" not in hpp and "OEFLAGS::NONE" not in hpp, "oeflags")
+    need(cpp.count("LumenCtor.inc") == 1 and "LinkAction(0, ActionExample)" not in cpp and "LinkExpression(1, HelloWorld)" not in cpp, "ctor include")
     need("LumenHandle()" in cpp and "if (x)" not in cpp and "ONE_SHOT" not in cpp, "handle body")
     if variant == "A":
-        need("return static_cast<REFLAG>(LumenDisplay());" in cpp, "display body")
+        need("\tLumenDisplay();" in cpp and "void Extension::Display()" in cpp, "display body (void in the real template)")
+        need("return static_cast<REFLAG>(LumenHandle());" in cpp and "ONE_SHOT" not in cpp.split("Extension::Handle")[1].split("PAUSABLE")[0], "handle body")
     if variant == "B":
         need("REFLAG Display();" in hpp and "REFLAG Extension::Display()" in cpp and "LumenDisplay()" in cpp, "display added")
     if variant == "C":
         need("short Extension::Display( void )" in rd("Runtime.cpp") and "static_cast<short>(LumenDisplay())" in rd("Runtime.cpp"), "display in other file")
         need("LumenDisplay" not in cpp, "display not duplicated")
     need("#error" not in rd("Edittime.cpp"), "#error removed")
-    need("WindowsXPCompatibility = false" in rd("FusionSDKConfig.ini"), "ini")
+    need("WindowsXPCompatibility = false" in open(os.path.join(tmp, "sdk", "FusionSDKConfig.ini")).read(), "ini in SDK root")
     need(not os.path.exists(os.path.join(p, "DarkExt.PostMinify.json")), "stale PostMinify removed")
     need(os.path.exists(os.path.join(p, "Lumen.Windows.vcxproj")) and os.path.exists(os.path.join(p, "Lumen.Shared.vcxitems")), "renamed files")
-    need("FUSION_INTERNAL_ACCESS;LUMEN_OBJECT_ACCESS;" in rd("Lumen.Windows.vcxproj"), "defines")
+    need("FUSION_INTERNAL_ACCESS;DARKEDIF_LOG_MIN_LEVEL=6;LUMEN_OBJECT_ACCESS;" in rd("Lumen.Windows.vcxproj"), "defines")
     need("lumen.cpp" in rd("Lumen.Shared.vcxitems") and "LumenExt.cpp" in rd("Lumen.Shared.vcxitems"), "sources")
     j = json.loads(rd("DarkExt.json"))
     lang = j["UK English"]
     ak, ck = ("about", "actions") if variant == "B" else ("About", "Actions")
     need(j["Identifier"] == "LUMN" and "French" not in j and len(lang[ck]) == 18 and lang[ak]["Name"] == "Lumen", "json")
+    props = [x["Title"] for x in (lang.get("Properties") or lang.get("properties"))]
+    need(props == ["Backdrop obstacles", "Pixel size"], "properties %s" % props)
     for n in ("lumen.hpp", "lumen.cpp", "LumenState.hpp", "LumenExt.cpp", "LumenMembers.inc", "LumenCtor.inc"):
         need(os.path.exists(os.path.join(p, n)), "missing " + n)
     need(os.path.exists(os.path.join(out, "template-reference", "Extension.hpp")), "reference snapshot")

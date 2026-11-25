@@ -14,6 +14,7 @@ struct LumenState {
 	bool bandsDirty = true;          // lightmap changed; rebuild band surfaces before drawing
 	bool forceRedraw = true;
 	int winW = 640, winH = 480;
+	int objW = 0, objH = 0;          // size last given to the run object (manual display needs one)
 	int frameW = 0, frameH = 0;
 	int lastCamX = -999999, lastCamY = -999999;
 	int shadeLevels = 16;            // darkness is quantised into this many opacity bands

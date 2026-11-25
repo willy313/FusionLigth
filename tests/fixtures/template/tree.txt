@@ -1,0 +1,24 @@
+Actions.cpp
+Common.hpp
+Conditions.cpp
+DarkEdif Template.Android.vcxproj
+DarkEdif Template.Android.vcxproj.filters
+DarkEdif Template.Mac.vcxproj
+DarkEdif Template.Mac.vcxproj.filters
+DarkEdif Template.Shared.vcxitems
+DarkEdif Template.Shared.vcxitems.filters
+DarkEdif Template.Windows.vcxproj
+DarkEdif Template.Windows.vcxproj.filters
+DarkEdif Template.iOS.vcxproj
+DarkEdif Template.iOS.vcxproj.filters
+DarkExt.json
+Edittime.cpp
+Expressions.cpp
+Ext.rc
+Extension.cpp
+Extension.hpp
+Icon.png
+Resource.h
+Runtime.cpp
+HTML5\DarkEdif_Template.js
+Wua\js\runtime\extensions\source\DarkEdif_Template.js

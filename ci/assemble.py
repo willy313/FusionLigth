@@ -208,24 +208,17 @@ def main():
     # 4c. Edittime.cpp: remove the deliberate #error
     et = find_one(proj, "Edittime.cpp")
     if et:
+        show(et, r"#\s*error|SetEditSize|GetObjectRect|objSize|EditorDisplay|DrawRectangle|DARKEDIF_DISPLAY")
         t = read(et)
         t2, n = re.subn(r"^[ \t]*#\s*error\s+Add your drawing tech here[^\n]*\n?", "", t, flags=re.M)
         if n:
             write(et, t2)
         print("Edittime.cpp: removed %d '#error' line(s)" % n)
 
-    # 4d. FusionSDKConfig.ini
-    ini = find_one(proj, "FusionSDKConfig.ini")
-    if ini:
-        t = read(ini)
-        if re.search(r"(?im)^\s*WindowsXPCompatibility\s*=", t):
-            t = re.sub(r"(?im)^(\s*WindowsXPCompatibility\s*=).*$", r"\1 false", t)
-        else:
-            t += "\nWindowsXPCompatibility = false\n"
-        write(ini, t)
-    else:
-        write(os.path.join(proj, "FusionSDKConfig.ini"), "[General]\nWindowsXPCompatibility = false\n")
-    print("FusionSDKConfig.ini: WindowsXPCompatibility = false")
+    # 4d. FusionSDKConfig.ini lives in the SDK root (not the project folder); same content as a known-good build.
+    write(os.path.join(a.sdk, "FusionSDKConfig.ini"),
+          "[Global]\nWindowsXPCompatibility = false\nFavorSizeOrSpeed = speed\nMakePDBDuringReleaseBuild = false\n")
+    print("wrote", os.path.join(a.sdk, "FusionSDKConfig.ini"))
 
     # 4e. vcxproj: preprocessor defines
     vcx = [os.path.join(d, n) for d, _s, fs in os.walk(proj) for n in fs if n.lower().endswith(".vcxproj")]
@@ -233,7 +226,7 @@ def main():
     if not win:
         die("no .vcxproj found in the assembled project")
     vproj = sorted(win, key=len)[0]
-    defs = "FUSION_INTERNAL_ACCESS;" + ("LUMEN_OBJECT_ACCESS;" if a.object_access else "")
+    defs = "FUSION_INTERNAL_ACCESS;DARKEDIF_LOG_MIN_LEVEL=6;" + ("LUMEN_OBJECT_ACCESS;" if a.object_access else "")
     block = ("\n  <ItemDefinitionGroup><ClCompile><PreprocessorDefinitions>%s%%(PreprocessorDefinitions)"
              "</PreprocessorDefinitions></ClCompile></ItemDefinitionGroup>" % defs)
     t = read(vproj)

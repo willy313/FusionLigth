@@ -11,6 +11,9 @@
 
 static_assert(sizeof(TCHAR) == sizeof(wchar_t), "Lumen is built for the Unicode configurations only");
 
+// Surface, SurfaceFill, ColorRGB, BlitOptions and BlitOperation live in the DarkEdif namespace in this SDK.
+using namespace DarkEdif;
+
 // Works whether CreateFromMainWindow() hands back a pointer, a smart pointer or a value.
 template <class T> static auto deref(T& t, int) -> decltype(*t) { return *t; }
 template <class T> static T& deref(T& t, long) { return t; }
@@ -95,11 +98,10 @@ static bool lumenObjRect(Extension& e, long fixed, const lumen::View& v, lumen::
 }
 #endif
 
-void Extension::LumenInit(bool backdropObstacles, const std::wstring& quality) {
+void Extension::LumenInit(bool backdropObstacles, const std::wstring& pixelSize, int objW, int objH) {
 	lumen::Engine::Settings st;
-	st.divisor = quality.find(L"Full") != std::wstring::npos ? 1
-		: quality.find(L"Quarter") != std::wstring::npos ? 4
-		: quality.find(L"Eighth") != std::wstring::npos ? 8 : 2;
+	const long ps = std::wcstol(pixelSize.c_str(), nullptr, 10);
+	st.divisor = (ps >= 1 && ps <= 8) ? (int)ps : 2;
 	int fw = 1024, fh = 768;
 #ifdef FUSION_INTERNAL_ACCESS
 	fw = rhPtr->rhFrame->hdr.Width;
@@ -107,10 +109,14 @@ void Extension::LumenInit(bool backdropObstacles, const std::wstring& quality) {
 #endif
 	lx = std::make_unique<LumenState>(fw, fh, st);
 	lx->backdropObstacles = backdropObstacles;
+	int ow = objW, oh = objH;
 #ifdef FUSION_INTERNAL_ACCESS
 	lx->winW = rhPtr->rh3.rh3WindowSx;
 	lx->winH = rhPtr->rh3.rh3WindowSy;
+	ow = lx->winW; oh = lx->winH;       // the object always covers the window; no need to size it in the editor
 #endif
+	// Manual display: without a size Fusion never calls Display() (field notes).
+	if (ow > 0 && oh > 0) { rdPtr->get_rHo()->SetSize(ow, oh); lx->objW = ow; lx->objH = oh; }
 }
 
 REFLAG Extension::LumenHandle() {
@@ -123,6 +129,11 @@ REFLAG Extension::LumenHandle() {
 	const int fw = rhPtr->rhFrame->hdr.Width, fh = rhPtr->rhFrame->hdr.Height;
 	if (fw != S.frameW || fh != S.frameH) { S.frameW = fw; S.frameH = fh; S.engine.resizeFrame(fw, fh); }
 #endif
+	if (S.winW != S.objW || S.winH != S.objH) {   // window size changed: keep the object covering it
+		rdPtr->get_rHo()->SetSize(S.winW, S.winH);
+		S.objW = S.winW; S.objH = S.winH;
+		S.forceRedraw = true;
+	}
 	lumen::View v;
 	v.camX = rhPtr->get_WindowX();
 	v.camY = rhPtr->get_WindowY();
@@ -135,6 +146,7 @@ REFLAG Extension::LumenHandle() {
 	const bool changed = S.engine.render(v);
 	if (changed) S.bandsDirty = true;
 	const bool camMoved = v.camX != S.lastCamX || v.camY != S.lastCamY;
+	if (camMoved) Runtime.SetPosition(v.camX, v.camY);   // keeps Fusion treating the object as on screen
 	S.lastCamX = v.camX; S.lastCamY = v.camY;
 	S.lastRenderMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 	const bool redraw = changed || camMoved || S.forceRedraw;
@@ -150,9 +162,10 @@ REFLAG Extension::LumenDisplay() {
 	if (!S.gfx || S.gfx->bands.empty()) return (REFLAG)0;
 	LumenGfx& G = *S.gfx;
 
-	auto dest = Surface::CreateFromMainWindow(rhPtr);
+	auto dest = Surface::CreateFromMainWindow(rhPtr);   // DarkEdif::Surface
 	auto& D = deref(dest, 0);
-	const int x0 = S.engine.blitX(), y0 = S.engine.blitY();
+	// Camera read at draw time (no one-tick lag); the lightmap itself was built in Handle().
+	const int x0 = S.engine.originPxX() - rhPtr->get_WindowX(), y0 = S.engine.originPxY() - rhPtr->get_WindowY();
 	const int x1 = x0 + S.engine.blitWidth(), y1 = y0 + S.engine.blitHeight();
 	const int K = G.levels;
 	S.bandBlits = 0;

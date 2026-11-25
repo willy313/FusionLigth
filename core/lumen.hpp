@@ -111,6 +111,8 @@ public:
 	int mapHeight() const { return gh_; }
 	int blitX() const { return blitX_; }   // screen position to draw the lightmap at
 	int blitY() const { return blitY_; }
+	int originPxX() const { return ox_ * s_.divisor; }   // frame x of the lightmap's left edge
+	int originPxY() const { return oy_ * s_.divisor; }
 	int blitWidth() const { return gw_ * s_.divisor; }
 	int blitHeight() const { return gh_ * s_.divisor; }
 	int darknessAtWorld(float wx, float wy) const;   // 0..255, 255 outside the map (tests/debug)

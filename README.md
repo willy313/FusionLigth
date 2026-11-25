@@ -50,16 +50,17 @@ a mock template.
 **Not verified, because neither the SDK nor Fusion could be reached from where this was written.** Expect the first
 CI run or the first test in Fusion to need a round of fixes:
 
-1. `ci/assemble.py` anchors against the real template (names such as `Edif::Runtime Runtime;`, the `OEFLAGS` line,
-   `LinkAction` lines, the `Handle()`/`Display()` bodies). A miss stops with a message naming the missing anchor.
-2. `DarkExt.json`: entries are cloned from the template's own examples so unknown fields are inherited, but the
-   result has not been through the SDK's pre-build tool.
+1. `ci/assemble.py` is now tested against the real template's `Extension.hpp/.cpp` and `DarkExt.json`
+   (`tests/fixtures/template`). `Edittime.cpp`, the `.vcxproj` and `.vcxitems` are still only mocked.
+2. `DarkExt.json`: written in the template's multi-language layout from its own example entries; it has not been through
+   the SDK's pre-build tool in a build that completed.
 3. Surface calls: the constructor argument list, `SetPixel` parameter order, passing brace-initialised rectangles and a
    `Surface&` destination to `CopySection`, **stretching** a small surface onto a larger rectangle, the **direction of the
    Blend coefficient** (the `invert` debug option exists for this), and whether `CreateFromMainWindow` returns something
    the caller must free.
-4. Manual-display requirements. The object must be sized to cover the window in the editor; the template may need more
-   members implemented (`GetZoneInfos`, `GetDisplaySurface`, `GetCollisionMask` per your notes).
+4. Manual display. The object sizes itself to the window in the constructor (without a size Fusion never calls
+   `Display()`, per your notes) and is moved to the window origin as the camera moves. `Edittime.cpp` is only patched
+   to remove the template's `#error`; the editor shows Fusion's default icon.
 5. Property API: `IsPropChecked` and `GetPropertyStr` as in your notes; the property schema comes from the template.
 6. Object access (`LUMEN_OBJECT_ACCESS`): `RunObjPtrFromFixed`, `get_X`/`get_Y` and `hoRect` are written from memory.
    It is off by default and enabled with the workflow option once the basic build is green.
@@ -72,5 +73,5 @@ CI run or the first test in Fusion to need a round of fixes:
    headers); the `Backdrop obstacles` property is reserved for it.
 3. Performance pass from real numbers (`DebugInfo$(`), then colour and spot lights if wanted.
 
-Editor properties (`Backdrop obstacles`, `Quality`) are fixed now: adding one after release breaks existing objects.
+Editor properties (`Backdrop obstacles`, `Pixel size`) are fixed now: adding one after release breaks existing objects.
 Identifier `LUMN` and all action, condition and expression IDs are stable from the first release; only append.

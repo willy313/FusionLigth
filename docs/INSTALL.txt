@@ -15,8 +15,8 @@ Start Fusion: "Lumen" appears in the Insert Object dialog.
 First test (about two minutes)
 ------------------------------
 1. Set Display mode to Direct3D 11 (Application properties, Runtime options).
-2. Insert a Lumen object and drag it to cover the whole window (for example 640 x 480 at 0,0).
-   Place it on a layer ABOVE the objects you want darkened.
+2. Insert a Lumen object anywhere in the frame (its editor size does not matter: at run time it sizes
+   itself to the window and follows it). Place it on a layer ABOVE the objects you want darkened.
 3. Events:
      Start of frame:  Lumen: Set ambient light to 0
                       Lumen: Create or update light 1 at (320, 240), radius 200, brightness 1, on layer 1
@@ -27,7 +27,9 @@ What to report back
 -------------------
  * It works / it crashes / it is not visible. For a crash, the exact text of the error box.
  * The text of  Lumen.DebugInfo$(  shown in a String object (it lists timings and counts).
- * Try "Set lightmap pixel size" with 1, 2, 4. Say which of them work.
+ * Try the "Pixel size" property (1, 2, 4) and the action "Set lightmap pixel size". Say which work.
+   1 draws without stretching; 2 and above stretch a small image over the window, which is the part
+   that is not yet confirmed.
  * If the light looks inverted (dark circle on bright ground) or the gradient looks wrong, run
    "Debug: set shade levels to 16, invert blend: 1" and say whether that fixes it.
  * Frame rate with 1 light and with 50 lights.

@@ -2,17 +2,22 @@
 #include <cstdio>
 #include <cstring>
 
-std::vector<Blit> g_blits;
+namespace DarkEdif { std::vector<Blit> g_blits; }
+using DarkEdif::g_blits;
+using DarkEdif::BlitOperation;
 static int g_checks = 0, g_fail = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { ++g_fail; std::printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
 
 int main() {
 	Frame frame; RunHeader rh; rh.rhFrame = &frame;
 	EDITDATA ed;
-	Extension e(&rh, &ed);
+	RunObject self; HeaderObject& ho = self.ho;
+	Extension e(&rh, &self, &ed);
 
-	// constructed from properties: quality "Half" -> pixel size 2
+	// constructed from properties: "Pixel size" = 2
 	CHECK(e.lx && e.lx->engine.settings().divisor == 2 && e.lx->winW == 640);
+	// manual display: the object is sized to the window (not the editor size) so Fusion calls Display()
+	CHECK(ho.sizeW == 640 && ho.sizeH == 480 && ho.setSizeCalls == 1);
 	CHECK(e.lx->engine.stats().lightsTotal == 0);
 
 	e.SetAmbient(0.0f);
@@ -25,6 +30,7 @@ int main() {
 	CHECK(e.LightExists(1) && !e.LightExists(77));
 
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
+	CHECK(e.Runtime.posCalls == 1 && e.Runtime.posX == 0 && e.Runtime.posY == 0);   // object moved to the window origin
 	g_blits.clear();
 	CHECK(e.LumenDisplay() == REFLAG(0));
 	CHECK(!g_blits.empty());
@@ -39,6 +45,16 @@ int main() {
 	CHECK(e.LumenHandle() == REFLAG(0));                       // nothing changed
 	rh.winX = 3;                                               // camera moved: redraw requested
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
+	CHECK(e.Runtime.posCalls == 2 && e.Runtime.posX == 3);
+	g_blits.clear(); e.LumenDisplay();
+	CHECK(!g_blits.empty() && g_blits[0].dl == e.lx->engine.originPxX() - 3);   // camera read at draw time
+	rh.winX = 5;                                               // scrolled again before drawing: no lag
+	g_blits.clear(); e.LumenDisplay();
+	CHECK(!g_blits.empty() && g_blits[0].dl == e.lx->engine.originPxX() - 5);
+	rh.winX = 3;
+	rh.rh3.rh3WindowSx = 800;                                  // window resized: object follows
+	CHECK(e.LumenHandle() == REFLAG::DISPLAY && ho.sizeW == 800 && ho.setSizeCalls == 2);
+	rh.rh3.rh3WindowSx = 640; e.LumenHandle();
 
 	// ambient lifts darkness: no fully dark band any more
 	e.SetAmbient(1.0f);
