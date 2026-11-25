@@ -39,10 +39,12 @@ REFLAG Extension::Display()
 '''
 VCX = '<Project>\n<Import Project="..\\Lib\\FusionSDK_AfterMSPropSheets.props" />\n</Project>\n'
 ITEMS = '<Project>\n<ItemGroup><ClCompile Include="$(MSBuildThisFileDirectory)Extension.cpp" /></ItemGroup>\n</Project>\n'
-JSON = {"About": {"Name": "DarkEdif Template", "Identifier": "DARK"},
+LANG = {"About": {"Name": "DarkEdif Template", "Author": "a", "Comment": "c"},
+        "ActionMenu": [["Sub", [0, "Ex"]]], "ConditionMenu": [], "ExpressionMenu": [],
         "Actions": [{"Title": "a %0", "Parameters": [["Integer", "p"]]}], "Conditions": [{"Title": "c", "Triggered": False, "Parameters": []}],
         "Expressions": [{"Title": "e(", "Returns": "Integer", "Parameters": []}],
         "Properties": [{"Type": "Checkbox", "Title": "t", "DefaultState": False}, {"Type": "Combo Box", "Title": "c", "Items": ["a"], "DefaultState": 0}]}
+JSON = {"Identifier": "EXMP", "Dependencies": [""], "UK English": LANG, "French": LANG}
 
 
 def put(p, s):
@@ -51,7 +53,7 @@ def put(p, s):
 
 
 def lower_keys(j):
-    return {k.lower(): v for k, v in j.items()}
+    return {k: ({a.lower(): b for a, b in v.items()} if isinstance(v, dict) else v) for k, v in j.items()}
 
 
 def run(variant):
@@ -103,8 +105,9 @@ def run(variant):
     need("FUSION_INTERNAL_ACCESS;LUMEN_OBJECT_ACCESS;" in rd("Lumen.Windows.vcxproj"), "defines")
     need("lumen.cpp" in rd("Lumen.Shared.vcxitems") and "LumenExt.cpp" in rd("Lumen.Shared.vcxitems"), "sources")
     j = json.loads(rd("DarkExt.json"))
+    lang = j["UK English"]
     ak, ck = ("about", "actions") if variant == "B" else ("About", "Actions")
-    need(j[ak]["Identifier"] == "LUMN" and len(j[ck]) == 18, "json")
+    need(j["Identifier"] == "LUMN" and "French" not in j and len(lang[ck]) == 18 and lang[ak]["Name"] == "Lumen", "json")
     for n in ("lumen.hpp", "lumen.cpp", "LumenState.hpp", "LumenExt.cpp", "LumenMembers.inc", "LumenCtor.inc"):
         need(os.path.exists(os.path.join(p, n)), "missing " + n)
     need(os.path.exists(os.path.join(out, "template-reference", "Extension.hpp")), "reference snapshot")

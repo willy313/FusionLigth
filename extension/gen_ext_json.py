@@ -169,17 +169,32 @@ def K(d, name):
     return name
 
 
+def split_langs(tmpl):
+    """Language objects of a multi-language DarkExt.json ("UK English": {...}, "French": {...}), by key."""
+    return {k: v for k, v in tmpl.items() if isinstance(v, dict) and isinstance(v.get(K(v, "Actions")), list)}
+
+
 def outline(tmpl):
     """Print the template's structure so a mismatch can be diagnosed from the CI log alone."""
     print("---- template DarkExt.json outline (top-level keys: %s)" % list(tmpl.keys()))
+    langs = split_langs(tmpl)
+    for k, v in tmpl.items():
+        if k not in langs:
+            print("  %s: %s" % (k, json.dumps(v)[:200]))
+    if langs:
+        name = "UK English" if "UK English" in langs else next(iter(langs))
+        print("  language objects: %s; detail of '%s':" % (list(langs), name))
+        tmpl = langs[name]
     for k, v in tmpl.items():
         if isinstance(v, dict):
-            print("  %s: object, keys=%s" % (k, list(v.keys())[:20]))
+            print("    %s: object %s" % (k, json.dumps(v)[:500]))
         elif isinstance(v, list):
-            first = json.dumps(v[0])[:400] if v else None
-            print("  %s: list(%d), first=%s" % (k, len(v), first))
+            if k.lower().endswith("menu"):
+                print("    %s: list(%d) %s" % (k, len(v), json.dumps(v)[:500]))
+            else:
+                print("    %s: list(%d), first=%s" % (k, len(v), json.dumps(v[0])[:500] if v else None))
         else:
-            print("  %s: %s" % (k, json.dumps(v)[:100]))
+            print("    %s: %s" % (k, json.dumps(v)[:100]))
     print("----")
 
 
@@ -187,17 +202,16 @@ def proto(lst):
     return copy.deepcopy(lst[0]) if lst else {}
 
 
-def build_json(tmpl):
+def build_lang(tmpl):
     j = copy.deepcopy(tmpl)
     ak = K(j, "About")
     if not isinstance(j.get(ak), dict):
         j[ak] = {}
     about = j[ak]
-    for k, v in (("Name", NAME), ("Identifier", IDENT), ("Author", AUTHOR), ("Comment", COMMENT)):
-        about[K(about, k)] = v
-    for k in list(j.keys()):                      # some template versions keep these at top level
-        if isinstance(k, str) and k.lower() in ("identifier", "name") and k != ak:
-            j[k] = IDENT if k.lower() == "identifier" else NAME
+    about[K(about, "Name")] = NAME
+    for k, v in (("Author", AUTHOR), ("Comment", COMMENT)):
+        if K(about, k) in about:
+            about[K(about, k)] = v
 
     def lst(name):
         v = tmpl.get(K(tmpl, name), [])
@@ -217,6 +231,9 @@ def build_json(tmpl):
     j[K(j, "ActionMenu")] = menu(ACTIONS, lambda e: e[3])
     j[K(j, "ConditionMenu")] = menu(CONDITIONS, lambda e: e[4])
     j[K(j, "ExpressionMenu")] = menu(EXPRESSIONS, lambda e: e[4])
+    tm = tmpl.get(K(tmpl, "ActionMenu"))
+    if tm and not (isinstance(tm[0], list) and tm[0] and isinstance(tm[0][0], str)):
+        print("WARNING: template menu entries look different from what this script writes: %s" % json.dumps(tm[0])[:300], file=sys.stderr)
 
     # Properties: clone the template's own entries per type so unknown required fields are inherited.
     tprops = lst("Properties")
@@ -237,6 +254,24 @@ def build_json(tmpl):
         props.append(p)
     j[K(j, "Properties")] = props
     return j
+
+
+def build_json(tmpl):
+    langs = split_langs(tmpl)
+    if not langs:                                   # flat, single-language schema
+        out = build_lang(tmpl)
+        out[K(out, "Identifier")] = IDENT
+        return out
+    out = {k: copy.deepcopy(v) for k, v in tmpl.items() if k not in langs}
+    out[K(out, "Identifier")] = IDENT
+    base = "UK English" if "UK English" in langs else next(iter(langs))
+    out[base] = build_lang(langs[base])             # other languages are dropped: their text would not match
+    return out
+
+
+def lang_of(root):
+    langs = split_langs(root)
+    return root[("UK English" if "UK English" in langs else next(iter(langs)))] if langs else root
 
 
 def decl(ret, fn, params):
@@ -294,14 +329,16 @@ def docs_md():
     return "\n".join(out) + "\n"
 
 
-FAKE_TEMPLATE = {
-    "About": {"Name": "DarkEdif Template", "Identifier": "DARK"},
+FAKE_LANG = {
+    "About": {"Name": "DarkEdif Template", "Author": "x", "Comment": "x"},
+    "ActionMenu": [["Sub", [0, "Example"]]], "ConditionMenu": [], "ExpressionMenu": [],
     "Actions": [{"Title": "x %0", "Parameters": [["Integer", "p"]]}],
     "Conditions": [{"Title": "c", "Triggered": False, "Parameters": []}],
     "Expressions": [{"Title": "e(", "Returns": "Integer", "Parameters": []}],
     "Properties": [{"Type": "Checkbox", "Title": "t", "DefaultState": False},
                    {"Type": "Combo Box", "Title": "c", "Items": ["a"], "DefaultState": 0}],
 }
+FAKE_TEMPLATE = {"Identifier": "EXMP", "Dependencies": [""], "UK English": FAKE_LANG, "French": FAKE_LANG}
 
 
 def selfcheck(root):
@@ -326,7 +363,12 @@ def selfcheck(root):
     sample = '{ // c\n\t"a": "x // not a comment, ]",\n\t/* block */ "b": [1, 2,],\n}\n'
     if load_jsonc(sample) != {"a": "x // not a comment, ]", "b": [1, 2]}:
         errs.append("load_jsonc does not handle comments / trailing commas correctly")
-    j = build_json(FAKE_TEMPLATE)
+    built = build_json(FAKE_TEMPLATE)
+    if built.get("Identifier") != IDENT or "French" in built or "Dependencies" not in built:
+        errs.append("multi-language template not handled")
+    if build_json(FAKE_LANG).get("Identifier") != IDENT:
+        errs.append("flat template not handled")
+    j = lang_of(built)
     for key, lst in (("ActionMenu", ACTIONS), ("ConditionMenu", CONDITIONS), ("ExpressionMenu", EXPRESSIONS)):
         ids = [item[0] for grp in j[key] for item in grp[1:]]
         if sorted(ids) != list(range(len(lst))):
@@ -370,7 +412,8 @@ def main():
     with open(a.template, encoding="utf-8-sig") as f:
         tmpl = load_jsonc(f.read())
     outline(tmpl)
-    missing = [n for n in ("Actions", "Conditions", "Expressions") if not isinstance(tmpl.get(K(tmpl, n)), list)]
+    base = lang_of(tmpl) if split_langs(tmpl) else tmpl
+    missing = [n for n in ("Actions", "Conditions", "Expressions") if not isinstance(base.get(K(base, n)), list)]
     if missing:
         sys.exit("ERROR: the template DarkExt.json has no %s list(s), so its schema is not what this script expects. "
                  "Refusing to generate a guessed schema. See the outline printed above (and "
