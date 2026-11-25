@@ -178,6 +178,12 @@ def main():
     cpp = find_one(proj, "Extension.cpp") or die("Extension.cpp not found in the template")
     show(cpp, r"Link(Action|Condition|Expression)|Extension::|GetZone|GetDisplay|GetCollision")
     lines, out, first = read(cpp).split("\n"), [], False
+    # The template's constructor reads its own example properties; Lumen has none of those, so DarkEdif would raise
+    # "IsPropChecked() error; property name ... does not exist" at run time. Drop that example block.
+    example_props = re.compile(r'IsPropChecked\("Checkbox within folder"|GetPropertyStr\("Editable 6"|\(void\)checkboxWithinFolder|\(void\)editable6Text')
+    dropped = [ln for ln in lines if example_props.search(ln)]
+    lines = [ln for ln in lines if not example_props.search(ln)]
+    print("removed %d template example property line(s) from Extension.cpp" % len(dropped))
     for ln in lines:
         if re.match(r"^\s*Link(Action|Condition|Expression)\s*\(.*\)\s*;", ln):
             if not first:

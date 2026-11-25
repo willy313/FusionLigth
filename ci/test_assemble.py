@@ -105,6 +105,11 @@ def run(variant):
     need(("Action", "0", "SetAmbient") in links and ("Expression", "8", "LastError") in links, "Link calls content")
     need("LumenHandle()" in cpp and "if (x)" not in cpp and "ONE_SHOT" not in cpp, "handle body")
     if variant == "A":
+        # every property name read in the assembled constructor must exist in the generated DarkExt.json
+        names = set(re.findall(r'(?:IsPropChecked|GetPropertyStr)\s*\(\s*(?:std::string_view\s*\()?\s*"([^"]+)"', cpp + rd("Extension.hpp")))
+        titles = {x["Title"] for x in json.loads(rd("DarkExt.json"))["UK English"]["Properties"]}
+        need(names <= titles and names, "property reads %s not all in JSON %s" % (names, titles))
+        need("Checkbox within folder" not in cpp and "Editable 6" not in cpp, "template example property reads removed")
         need("\tLumenDisplay();" in cpp and "void Extension::Display()" in cpp, "display body (void in the real template)")
         need("return static_cast<REFLAG>(LumenHandle());" in cpp and "ONE_SHOT" not in cpp.split("Extension::Handle")[1].split("PAUSABLE")[0], "handle body")
     if variant == "B":
