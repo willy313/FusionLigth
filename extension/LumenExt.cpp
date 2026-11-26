@@ -118,7 +118,7 @@ static void ensureDot(Extension& e, LumenState& S) {
 	if (G.dot) return;
 	crumb("dot: create 1x1 black surface");
 	G.dot = std::make_unique<Surface>(e.rhPtr, true, false, 1, 1, false);
-	G.dot->FillImageWith(SurfaceFill::Solid(ColorRGB(0, 0, 0)));
+	G.dot->FillImageWith(SurfaceFill::Solid(ColorRGB(1, 1, 1)));   // near-black: safe even if black is a transparent colour key
 	crumb("dot: ready");
 }
 
@@ -291,6 +291,27 @@ REFLAG Extension::LumenHandle() {
 	return redraw ? REFLAG::DISPLAY : (REFLAG)0;
 }
 
+// Blend test: 4 rows x 9 columns of stretched 1x1 blits over the window, columns with Blend coefficient 0, 16 ... 128.
+// By the SDK header coefficient 0 is solid black and 128 is invisible. Each row uses another flag combination, so one
+// screenshot shows which combination really blends:
+//   row 1: transparent=false, flags None        (the rectangles method's default)
+//   row 2: transparent=true,  flags None
+//   row 3: transparent=true,  flags CopyAlpha   (the SDK's default flags)
+//   row 4: transparent=false, flags CopyAlpha
+static void drawBlendTest(Extension& e, LumenState& S, Surface& D) {
+	ensureDot(e, S);
+	Surface& dot = *S.gfx->dot;
+	const Rect one(0, 0, 1, 1);
+	for (int row = 0; row < 4; ++row) {
+		const bool transparent = (row == 1 || row == 2);
+		const BlitOptions flags = (row >= 2) ? BlitOptions::CopyAlpha : BlitOptions::None;
+		for (int col = 0; col <= 8; ++col) {
+			const int x = 20 + col * 70, y = 20 + row * 60;
+			dot.CopySection(one, D, Rect(x, y, x + 60, y + 50), transparent, flags, BlitOperation::Blend, (std::uint8_t)(col * 16));
+		}
+	}
+}
+
 REFLAG Extension::LumenDisplay() {
 	if (!lx) return (REFLAG)0;
 	LumenState& S = *lx;
@@ -307,21 +328,23 @@ REFLAG Extension::LumenDisplay() {
 	// Camera read at draw time (no one-tick lag); the lightmap itself was built in Handle().
 	const int d = S.engine.settings().divisor;
 	const int ox = S.engine.originPxX() - rhPtr->get_WindowX(), oy = S.engine.originPxY() - rhPtr->get_WindowY();
+	if (S.testPattern) { drawBlendTest(*this, S, D); return (REFLAG)0; }
 	if (S.strategy == M_RECTS) {
 		if (logIt) crumb("display: rectangles " + std::to_string(G.runs.size()));
 		const Rect one(0, 0, 1, 1);
+		const BlitOptions rectFlags = S.copyAlpha ? BlitOptions::CopyAlpha : BlitOptions::None;
 		for (const Run& r : G.runs) {
 			const double opacity = (double)r.q / S.levels;
 			int coef = (int)std::lround((S.invertBlend ? opacity : 1.0 - opacity) * 128.0);   // Fusion's convention: 0 = opaque
 			coef = (std::max)(0, (std::min)(128, coef));
 			const Rect dst(ox + r.x0 * d, oy + r.y0 * d, ox + r.x1 * d, oy + r.y1 * d, true);
-			G.dot->CopySection(one, D, dst, false, BlitOptions::None, BlitOperation::Blend, (std::uint8_t)coef);
+			G.dot->CopySection(one, D, dst, S.transparent, rectFlags, BlitOperation::Blend, (std::uint8_t)coef);
 		}
 	} else {
 		// Rect(l, t, r, b) rejects negative coordinates unless allowNeg is true, and our destination can start off screen.
 		const Rect src(0, 0, G.mw, G.mh);
 		const Rect dst(ox, oy, ox + S.engine.blitWidth(), oy + S.engine.blitHeight(), true);
-		BlitOptions flags = S.smooth ? BlitOptions::AntiAliasing : BlitOptions::None;
+		BlitOptions flags = BlitOptions::AntiAliasing;
 		if (S.copyAlpha) flags = flags | BlitOptions::CopyAlpha;
 		if (logIt) crumb("display: blit " + std::to_string(G.mw) + "x" + std::to_string(G.mh) + " -> (" + std::to_string(ox) + "," + std::to_string(oy) + ") flags " + std::to_string((int)flags));
 		G.mask->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
@@ -406,14 +429,19 @@ void Extension::RemoveShadowCasterObject(RunObject* p0) {
 void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->maskDirty = true; lx->forceRedraw = true; }
 
 void Extension::SetRenderOptions(int p0, int p1, int p2, int p3, int p4) {
-	lx->levels = (std::max)(4, (std::min)(64, p4));
-	lx->smooth = p0 != 0;
-	lx->copyAlpha = p1 != 0;
-	lx->invertBlend = p3 != 0;
-	lx->forcedStrategy = (p2 >= 0 && p2 < M_COUNT) ? p2 : -1;
+	lx->forcedStrategy = (p0 >= 0 && p0 < M_COUNT) ? p0 : -1;
 	lx->strategy = lx->forcedStrategy;               // -1 = choose again automatically
 	lx->strategyConfirmed = lx->forcedStrategy >= 0; // forced methods are not remembered
+	lx->levels = (std::max)(4, (std::min)(64, p1));
+	lx->invertBlend = p2 != 0;
+	lx->transparent = p3 != 0;
+	lx->copyAlpha = p4 != 0;
 	lx->maskDirty = true;
+	lx->forceRedraw = true;
+}
+
+void Extension::ShowBlendTest(int p0) {
+	lx->testPattern = p0 != 0;
 	lx->forceRedraw = true;
 }
 
@@ -438,11 +466,11 @@ const TCHAR* Extension::DebugInfo() {
 	char b[520];
 	std::snprintf(b, sizeof b,
 		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, lightmap %dx%d at pixel size %d, "
-		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (blits %d, levels %d), alpha pitch %d, smooth %d, copyalpha %d",
+		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (blits %d, levels %d), alpha pitch %d, transparent %d, copyalpha %d",
 		st.lightsTotal, st.lightsVisible, st.lightsRecomputed, st.raysCast, st.composes,
 		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor,
 		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, methodName(S.strategy), S.strategyConfirmed ? " (confirmed)" : "",
-		S.runCount, S.levels, S.alphaPitch, S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
+		S.runCount, S.levels, S.alphaPitch, S.transparent ? 1 : 0, S.copyAlpha ? 1 : 0);
 	return text(S, b);
 }
 

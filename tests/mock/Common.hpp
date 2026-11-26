@@ -57,7 +57,7 @@ enum class BlitOptions { None = 0, AntiAliasing = 1, CopyAlpha = 2 };
 inline BlitOptions operator|(BlitOptions a, BlitOptions b) { return (BlitOptions)((int)a | (int)b); }
 enum class BlitOperation { Copy, Blend };
 
-struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; BlitOptions flags; };
+struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; BlitOptions flags; bool transparent; };
 extern std::vector<Blit> g_blits;
 extern bool g_blitWhileLocked;
 struct Surface;
@@ -114,9 +114,9 @@ struct Surface {
 		}
 		if (p.x >= 0 && p.y >= 0 && (std::size_t)p.x < w && (std::size_t)p.y < h) pix[(std::size_t)p.y * w + p.x] = c & 0x00FFFFFF;
 	}
-	bool CopySection(Rect s, Surface&, Rect d, bool = true, BlitOptions f = BlitOptions::CopyAlpha,
+	bool CopySection(Rect s, Surface&, Rect d, bool transparent = true, BlitOptions f = BlitOptions::CopyAlpha,
 		BlitOperation op = BlitOperation::Copy, std::uint8_t coef = 0) const {
-		g_blits.push_back({ s.right - s.left, s.bottom - s.top, d.left, d.top, d.right, d.bottom, op, coef, f });
+		g_blits.push_back({ s.right - s.left, s.bottom - s.top, d.left, d.top, d.right, d.bottom, op, coef, f, transparent });
 		g_lastBlitSource = this;
 		g_blitWhileLocked = g_blitWhileLocked || lockedAlpha;
 		return true;

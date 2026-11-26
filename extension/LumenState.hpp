@@ -17,8 +17,9 @@ struct LumenState {
 	int objW = 0, objH = 0;          // size last given to the run object (manual display needs one)
 	int frameW = 0, frameH = 0;
 	int lastCamX = -999999, lastCamY = -999999;
-	bool smooth = true;              // BlitOptions::AntiAliasing: smooth stretching of the lightmap
 	bool copyAlpha = false;          // BlitOptions::CopyAlpha COPIES alpha instead of applying it, so it is off
+	bool transparent = false;        // rectangles method: the `transparent` argument of CopySection
+	bool testPattern = false;        // draw the blend test pattern instead of the lighting
 	bool invertBlend = false;        // rectangles strategy: flips the Blend coefficient direction
 	int strategy = -1;               // how darkness reaches the screen; -1 = not chosen yet (see LumenExt.cpp)
 	int forcedStrategy = -1;         // set by the debug action; -1 = automatic

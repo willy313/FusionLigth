@@ -60,10 +60,14 @@ ACTIONS = [
  Act("RemoveShadowCasterObject", "Stop object casting shadows", "Stop %0 casting shadows", [(O, "Object")], "Shadows"),
  Act("SetQuality", "Set lightmap pixel size", "Set lightmap pixel size to %0 (1 = sharpest, 4 = fastest)", [(I, "Pixel size (1 to 16)")], "Settings"),
  Act("SetRenderOptions", "Debug: render options",
-     "Debug: smooth edges %0 (1/0), copy-alpha flag %1 (1/0), method %2 (-1 auto, 0, 1, 2), invert blend %3 (1/0), shade levels %4",
-     [(I, "Smooth edges (1/0, alpha methods only)"), (I, "Copy-alpha blit flag (1/0, alpha methods only)"),
-      (I, "Method (-1 = automatic, 0 = alpha lock, 1 = alpha surface, 2 = rectangles)"),
-      (I, "Invert blend direction (1/0, rectangles method)"), (I, "Shade levels (4 to 64; fewer = faster, rectangles method)")], "Settings"),
+     "Debug: method %0 (-1 auto, 0, 1, 2), shade levels %1, invert blend %2 (1/0), source transparent %3 (1/0), copy-alpha flag %4 (1/0)",
+     [(I, "Method (-1 = automatic, 0 = alpha lock, 1 = alpha surface, 2 = rectangles)"),
+      (I, "Shade levels (4 to 64; fewer = faster, rectangles method)"),
+      (I, "Invert blend direction (1/0, rectangles method)"),
+      (I, "Source transparent flag of the blit (1/0, rectangles method)"),
+      (I, "Copy-alpha blit flag (1/0)")], "Settings"),
+ Act("ShowBlendTest", "Debug: show blend test pattern", "Debug: show blend test pattern %0 (1 = on, 0 = off)",
+     [(I, "On (1) or off (0)")], "Settings"),
 ]
 
 CONDITIONS = [

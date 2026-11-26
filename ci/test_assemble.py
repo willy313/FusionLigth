@@ -5,6 +5,8 @@ template files as 'template-reference' for that."""
 import os, re, shutil, subprocess, sys, tempfile, json
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "extension"))
+import gen_ext_json as GEN   # the spec: counts below are derived from it, never hard-coded
 HPP = '''#pragma once
 class Extension final
 {
@@ -101,8 +103,8 @@ def run(variant):
     need("LumenCtor.inc" not in cpp and "LinkAction(0, ActionExample)" not in cpp and "LinkExpression(1, HelloWorld)" not in cpp, "ctor include inlined")
     # the SDK's DarkEdifPreBuildTool scans Extension.cpp for literal Link* calls: emulate that scan
     links = re.findall(r"Link(Action|Condition|Expression)\s*\(\s*(\d+)\s*,\s*(\w+)\s*\)", cpp)
-    need(len(links) == 18 + 2 + 9, "pre-build tool would find %d Link calls, expected 29" % len(links))
-    need(("Action", "0", "SetAmbient") in links and ("Expression", "8", "LastError") in links, "Link calls content")
+    need(len(links) == len(GEN.ACTIONS) + len(GEN.CONDITIONS) + len(GEN.EXPRESSIONS), "pre-build tool would find %d Link calls" % len(links))
+    need(("Action", "0", "SetAmbient") in links and ("Expression", str(len(GEN.EXPRESSIONS) - 1), "LastError") in links, "Link calls content")
     need("void CreateLightOnObject(int p0, RunObject* p1," in rd("Extension.hpp") or "void CreateLightOnObject(int p0, RunObject* p1" in rd("Extension.hpp"), "object parameters declared")
     need("LumenHandle()" in cpp and "if (x)" not in cpp and "ONE_SHOT" not in cpp, "handle body")
     if variant == "A":
@@ -129,7 +131,7 @@ def run(variant):
     j = json.loads(rd("DarkExt.json"))
     lang = j["UK English"]
     ak, ck = ("about", "actions") if variant == "B" else ("About", "Actions")
-    need(j["Identifier"] == "LUMN" and "French" not in j and len(lang[ck]) == 18 and lang[ak]["Name"] == "Lumen", "json")
+    need(j["Identifier"] == "LUMN" and "French" not in j and len(lang[ck]) == len(GEN.ACTIONS) and lang[ak]["Name"] == "Lumen", "json")
     am = lang.get("ActionMenu") or lang.get("actionmenu")
     labels = [i[1] for g in am for i in g[1:]]
     need("Create light on object" in labels and not any("%" in l for l in labels), "friendly menu labels: %s" % labels)

@@ -1,6 +1,7 @@
 #include "../core/lumen.hpp"
 #include <chrono>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 using namespace lumen;
 
@@ -270,6 +271,31 @@ static void test_set_divisor() {
 	CHECK(!e.render(V));
 }
 
+static void test_huge_radius() {
+	Engine e(2000, 1500, S(2));
+	e.setLight(mk(1, 200, 200, 4000, 0, 0.5f));               // far bigger than the window
+	e.setAmbient(0.5f);
+	auto t0 = std::chrono::steady_clock::now();
+	e.render(V);
+	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	CHECK(ms < 400);                                           // was seconds: the buffer is clipped to the view plus a margin
+	CHECK(e.stats().lightsRecomputed == 1);
+	// ambient 0.5 + light 0.5 * (1 - d/4000)^2: nearly fully lit near the light, still bright far away
+	CHECK(e.darknessAtWorld(200, 200) <= 4);
+	const float lit = 0.5f + 0.5f * (1 - 150.0f / 4000) * (1 - 150.0f / 4000);
+	CHECK(std::abs(e.darknessAtWorld(350, 200) - (255 - (int)(lit * 255))) <= 3);
+	// scrolling far beyond the cached margin recomputes once and stays correct
+	View far{ 1500, 1000, 400, 400 };
+	e.render(far);
+	CHECK(e.stats().lightsRecomputed == 1);
+	const float lit2 = 0.5f + 0.5f * std::pow(1 - std::sqrt(1600.0f * 1600 + 1000.0f * 1000) / 4000, 2.0f);
+	CHECK(std::abs(e.darknessAtWorld(1800, 1200) - (255 - (int)(lit2 * 255))) <= 3);
+	// a small scroll inside the margin does not recompute
+	View near{ 1510, 1000, 400, 400 };
+	e.render(near);
+	CHECK(e.stats().lightsRecomputed == 0);
+}
+
 static void bench() {
 	Engine::Settings s; s.divisor = 4; s.cell = 8; s.maxLights = 500;
 	Engine e(4000, 4000, s);
@@ -300,7 +326,7 @@ int main() {
 	test_grid_counting(); test_open_light(); test_ambient(); test_shadow(); test_layers();
 	test_light_inside_caster(); test_culling_and_cache(); test_selective_invalidation();
 	test_upsert_and_limits(); test_brightness_sum_clamps(); test_attachment(); test_dynamic_caster();
-	test_clear_obstacles_and_resize(); test_divisors(); test_set_divisor();
+	test_clear_obstacles_and_resize(); test_divisors(); test_set_divisor(); test_huge_radius();
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	bench();
 	return g_fail ? 1 : 0;

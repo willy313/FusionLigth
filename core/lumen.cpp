@@ -199,14 +199,16 @@ float Engine::castRay(int layer, float ox, float oy, float dx, float dy, float m
 	}
 }
 
-void Engine::computeLight(const Light& L, Cache& c) {
+void Engine::computeLight(const Light& L, Cache& c, const IRect& region) {
 	const int d = s_.divisor;
 	const float C = (float)grid_.cell();
 	c.x = L.x; c.y = L.y; c.radius = L.radius; c.brightness = L.brightness; c.falloff = L.falloff; c.layer = L.layer;
-	c.gx0 = (int)std::floor((L.x - L.radius) / d);
-	c.gy0 = (int)std::floor((L.y - L.radius) / d);
-	c.w = (int)std::floor((L.x + L.radius) / d) - c.gx0 + 1;
-	c.h = (int)std::floor((L.y + L.radius) / d) - c.gy0 + 1;
+	// Only the cells of `region` (the light's box clipped to the view plus a margin) are computed, so a huge radius costs
+	// about as much as a window-sized one.
+	c.gx0 = region.l;
+	c.gy0 = region.t;
+	c.w = region.r - region.l;
+	c.h = region.b - region.t;
 	c.data.assign((size_t)c.w * c.h, 0);
 	c.valid = true;
 
@@ -286,9 +288,15 @@ bool Engine::render(const View& v) {
 		if (gx1 < ox_ || gx0 >= ox_ + gw_ || gy1 < oy_ || gy0 >= oy_ + gh_) continue;
 		visible.push_back(&L);
 		Cache& c = caches_[L.id];
-		if (!c.valid || c.x != L.x || c.y != L.y || c.radius != L.radius || c.brightness != L.brightness ||
+		// The part of the light that is on screen must be inside the cached region; otherwise (first draw, a move, or a
+		// scroll past the margin) the region is recomputed around the current view.
+		const IRect need{ std::max(gx0, ox_), std::max(gy0, oy_), std::min(gx1 + 1, ox_ + gw_), std::min(gy1 + 1, oy_ + gh_) };
+		const bool covered = c.valid && c.gx0 <= need.l && c.gy0 <= need.t && c.gx0 + c.w >= need.r && c.gy0 + c.h >= need.b;
+		if (!covered || c.x != L.x || c.y != L.y || c.radius != L.radius || c.brightness != L.brightness ||
 			c.falloff != L.falloff || c.layer != L.layer) {
-			computeLight(L, c);
+			const int m = (256 + d - 1) / d;               // margin: 256 pixels around the view
+			const IRect region{ std::max(gx0, ox_ - m), std::max(gy0, oy_ - m), std::min(gx1 + 1, ox_ + gw_ + m), std::min(gy1 + 1, oy_ + gh_ + m) };
+			computeLight(L, c, region);
 			++stats_.lightsRecomputed;
 			dirty_ = true;
 		}

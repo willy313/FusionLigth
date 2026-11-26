@@ -38,6 +38,35 @@ First test (about two minutes)
      Always:          Lumen: Move light 1 to X=XMouse, Y=YMouse
 4. Run. Expect darkness with a smooth circle of light following the mouse, and a shadow behind each wall.
 
+Blend test (do this if the darkness looks wrong, for example everything is solid black)
+------------------------------------------------------------------------------------
+Lumen darkens by drawing black blits with a "Blend" coefficient. The SDK header says coefficient 0 is solid black and
+128 is invisible, but on your machine the blits came out solid black. The test pattern shows which flag combination
+really blends:
+
+  1. In a test frame with a bright background, put at Start of frame:
+         Lumen: Debug: show blend test pattern 1
+  2. Run it and take a screenshot. You see 4 rows of 9 rectangles. Left to right the coefficient goes 0, 16, 32 ... 128.
+       row 1: transparent flag off, no flags            (what Lumen uses now)
+       row 2: transparent flag on,  no flags
+       row 3: transparent flag on,  copy-alpha flag
+       row 4: transparent flag off, copy-alpha flag
+     A row that works fades smoothly from solid black on the left to invisible on the right.
+     Tell me, for each row: smooth fade / all solid black / all invisible / something else.
+  3. You can then try the winning row yourself with
+         Lumen: Debug: render options  method 2, shade levels 16, invert blend 0,
+                                       source transparent <row's transparent flag>, copy-alpha <row's copy-alpha flag>
+     (turn the test pattern off with  show blend test pattern 0).
+
+Shadows
+-------
+  * Objects that appear in the event editor (active objects, ...) cast shadows with "Make object cast shadows".
+  * Backdrop objects CANNOT cast shadows yet (they are not objects Fusion lets an extension see). Use one of these:
+      - change the backdrop into an Active object, or
+      - "Add obstacle rectangle" with the backdrop's position and size.
+  * Radius is in pixels. A radius of 100 to 400 is typical; very large radii are clipped to what is on screen, but
+    large lights are still slower than small ones.
+
 If the application crashes without any message
 ----------------------------------------------
 Lumen has three ways to put the darkness on the screen. The SDK does not say which of them works, so Lumen finds out:

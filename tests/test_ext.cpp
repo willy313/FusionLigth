@@ -35,7 +35,7 @@ int main() {
 	RunObject self; HeaderObject& ho = self.ho;
 	Extension e(&rh, &self, &ed);
 
-	e.SetRenderOptions(1, 0, 0, 0, 16);                        // this flow checks the alpha-lock method; auto-selection is tested below
+	e.SetRenderOptions(0, 16, 0, 0, 0);                        // this flow checks the alpha-lock method; auto-selection is tested below
 	// constructed from properties: "Pixel size" = 2
 	CHECK(e.lx && e.lx->engine.settings().divisor == 2 && e.lx->winW == 640);
 	// manual display: the object is sized to the window (not the editor size) so Fusion calls Display()
@@ -110,9 +110,9 @@ int main() {
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
 
 	// render options + quality + errors
-	e.SetRenderOptions(0, 1, 0, 0, 16); g_blits.clear(); e.LumenDisplay();
-	CHECK(g_blits.size() == 1 && g_blits[0].flags == BlitOptions::CopyAlpha);
-	e.SetRenderOptions(1, 0, 0, 0, 16); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(0, 16, 0, 0, 1); g_blits.clear(); e.LumenDisplay();
+	CHECK(g_blits.size() == 1 && g_blits[0].flags == (BlitOptions::AntiAliasing | BlitOptions::CopyAlpha));
+	e.SetRenderOptions(0, 16, 0, 0, 0); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits[0].flags == BlitOptions::AntiAliasing);
 	e.SetQuality(4); CHECK(e.LumenHandle() == REFLAG::DISPLAY && e.lx->engine.settings().divisor == 4);
 	e.LumenDisplay();
@@ -158,7 +158,7 @@ int main() {
 	// ---- method 1: grey pixels of the alpha surface
 	{
 		e.CreateLight(30, 200, 150, 100, 1.0f, 1); e.LumenHandle();
-		e.SetRenderOptions(1, 0, 1, 0, 16); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		e.SetRenderOptions(1, 16, 0, 0, 0); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
 		const DarkEdif::Surface* m = DarkEdif::g_lastBlitSource;
 		CHECK(g_blits.size() == 1 && g_blits[0].op == BlitOperation::Copy && m->alphaView);
 		const int gx = 200 / 2 - e.lx->engine.originPxX() / 2, gy = 150 / 2 - e.lx->engine.originPxY() / 2;
@@ -167,7 +167,7 @@ int main() {
 	}
 	// ---- method 2: rectangles, each lit cell covered exactly once, coefficient follows Fusion's convention
 	for (int levels : { 16, 32 }) for (int invert = 0; invert < 2; ++invert) {
-		e.SetRenderOptions(1, 0, 2, invert, levels); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		e.SetRenderOptions(2, levels, invert, 0, 0); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
 		CHECK(!g_blits.empty() && (int)g_blits.size() == e.lx->runCount);
 		const int d = e.lx->engine.settings().divisor, mw = e.lx->engine.mapWidth(), mh = e.lx->engine.mapHeight();
 		const int ox = e.lx->engine.originPxX() - rh.get_WindowX(), oy = e.lx->engine.originPxY() - rh.get_WindowY();

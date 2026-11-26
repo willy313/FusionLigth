@@ -128,7 +128,7 @@ private:
 		int layer = 0;
 	};
 	struct Caster { int layer; IRect rect; bool has; };
-	void computeLight(const Light& L, Cache& c);
+	void computeLight(const Light& L, Cache& c, const IRect& region);
 	float castRay(int layer, float ox, float oy, float dx, float dy, float maxDist) const;
 	static bool sameShape(const Light& a, const Light& b);
 
