@@ -44,12 +44,12 @@ one moving light about 0.8 ms per frame, scrolling about 0.5 ms per frame.
 ## What is verified and what is not
 
 Verified here: the core (108 checks), the extension layer against a mock that enforces the real SDK's rules for
-`Point`, `Rect`, `SetPixel` and `CopySection` (48 checks), that the generated declarations match the C++ signatures,
+`Point`, `Rect`, `SetPixel` and `CopySection` (536 checks), that the generated declarations match the C++ signatures,
 and the assembly script against the real template's `Extension.hpp/.cpp`, `Edittime.cpp` and `DarkExt.json`.
 Verified by a real CI build and a first run in Fusion: assembly, compile, link, `DarkEdifPreBuildTool`, loading in Fusion.
 
 Checked against the SDK headers (written from the real declarations, not run in Fusion yet): per-pixel-alpha
-rendering (`Surface(..., alpha = true)`, `SetPixel` with alpha, `CopySection` with `BlitOptions::AntiAliasing`),
+rendering (`Surface(..., alpha = true)`, darkness written into the alpha plane through `GetAlphaBytes()` because `SetPixel` moves colour only, `CopySection` with `BlitOptions::AntiAliasing`),
 `Runtime.RunObjPtrFromFixed` / `FixedFromRunObjPtr`, `HeaderObject::get_X/get_Y/get_ImgWidth/...`, and Object action
 parameters (`Params::Object`, delivered as `RunObject*`, once per selected instance).
 

@@ -15,9 +15,10 @@ using namespace DarkEdif;
 
 // ------------------------------------------------------------------ graphics
 
-// The darkness is ONE CPU surface with per-pixel alpha (black, alpha = darkness), written pixel by pixel and
-// blitted over the window with the alpha applied. Surface(..., alpha = true) is documented as "per-pixel variable
-// transparency"; CopySection applies source alpha unless BlitOptions::CopyAlpha is set (that flag copies it instead).
+// The darkness is ONE CPU surface: RGB all black plus a separate ALPHA PLANE holding the darkness. SetPixel only moves
+// colour, not alpha (field notes: "GetPixel/SetPixel move colour only, not alpha"), so the alpha plane is written
+// directly through GetAlphaBytes(). CopySection applies the source alpha unless BlitOptions::CopyAlpha is set (that
+// flag copies the alpha channel to the destination instead of applying it).
 struct LumenGfx {
 	std::unique_ptr<Surface> mask;
 	int mw = 0, mh = 0;
@@ -29,8 +30,10 @@ static void ensureMask(Extension& e, LumenState& S, int mw, int mh) {
 	if (!S.gfx) S.gfx = new LumenGfx();
 	LumenGfx& G = *S.gfx;
 	if (G.mask && G.mw == mw && G.mh == mh) return;
-	G.mask = std::make_unique<Surface>(e.rhPtr, true, false, mw, mh, true);
+	G.mask = std::make_unique<Surface>(e.rhPtr, true, false, mw, mh, true);   // alpha = true: per-pixel transparency
+	G.mask->FillImageWith(SurfaceFill::Solid(ColorRGB(0, 0, 0)));               // RGB is black everywhere, forever
 	G.mw = mw; G.mh = mh;
+	S.maskHasAlpha = G.mask->HasAlpha();
 	S.maskDirty = true;
 }
 
@@ -41,9 +44,21 @@ static void rebuildMask(Extension& e, LumenState& S) {
 	if (px.size() != (size_t)mw * mh) return;
 	ensureMask(e, S, mw, mh);
 	Surface& m = *S.gfx->mask;
-	for (int y = 0; y < mh; ++y)
-		for (int x = 0; x < mw; ++x)
-			m.SetPixel(Point(x, y), px[(size_t)y * mw + x], true);   // 0xAA000000: black with alpha AA (rgb is 0, so premultiplication is moot)
+	m.SetTransparencyToAlpha();                     // transparency comes from the alpha plane, not from a colour key
+	if (!m.HasAlpha()) { S.lastError = "Lumen mask surface has no alpha plane"; return; }
+	{
+		auto lock = m.GetAlphaBytes();                // locks the alpha plane until `lock` goes out of scope
+		std::uint8_t* alpha = *lock;
+		const int pitch = m.GetAlphaPitch();          // bytes per row, may include padding
+		if (!alpha) { S.lastError = "Lumen could not lock the mask alpha plane"; return; }
+		S.alphaPitch = pitch;
+		for (int y = 0; y < mh; ++y) {
+			std::uint8_t* row = alpha + (std::ptrdiff_t)y * pitch;
+			const uint32_t* src = &px[(size_t)y * mw];
+			for (int x = 0; x < mw; ++x)
+				row[x] = (std::uint8_t)(src[x] >> 24);   // darkness: 0 = transparent (lit), 255 = opaque black
+		}
+	}
 	S.lastMaskMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -239,13 +254,14 @@ float Extension::Ambient() { return lx->engine.ambient(); }
 const TCHAR* Extension::DebugInfo() {
 	LumenState& S = *lx;
 	const lumen::Stats& st = S.engine.stats();
-	char b[420];
+	char b[480];
 	std::snprintf(b, sizeof b,
 		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, lightmap %dx%d at pixel size %d, "
-		"window %dx%d, handle %.2f ms, mask upload %.2f ms, smooth %d, copyalpha %d",
+		"window %dx%d, handle %.2f ms, mask write %.2f ms, mask has alpha %d (pitch %d), smooth %d, copyalpha %d",
 		st.lightsTotal, st.lightsVisible, st.lightsRecomputed, st.raysCast, st.composes,
 		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor,
-		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
+		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, S.maskHasAlpha ? 1 : 0, S.alphaPitch,
+		S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
 	return text(S, b);
 }
 

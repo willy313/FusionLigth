@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace DarkEdif { std::vector<Blit> g_blits; int g_negViolations = 0; int g_alphaWriteOnOpaqueSurface = 0; const Surface* g_lastBlitSource = nullptr; }
+namespace DarkEdif { std::vector<Blit> g_blits; int g_negViolations = 0; bool g_blitWhileLocked = false; const Surface* g_lastBlitSource = nullptr; }
 using DarkEdif::g_blits;
 using DarkEdif::BlitOperation;
 using DarkEdif::BlitOptions;
@@ -12,7 +12,6 @@ static int g_checks = 0, g_fail = 0;
 static RunObject makeObj(int fixed, int x, int y, int w, int h, int sx, int sy) {
 	RunObject o; o.fixed = fixed; o.ho.x = x; o.ho.y = y; o.ho.imgW = w; o.ho.imgH = h; o.ho.spotX = sx; o.ho.spotY = sy; return o;
 }
-static unsigned alphaOf(std::uint32_t c) { return c >> 24; }
 
 int main() {
 	Frame frame; RunHeader rh; rh.rhFrame = &frame;
@@ -46,15 +45,23 @@ int main() {
 	CHECK(b0.flags == BlitOptions::AntiAliasing);
 	CHECK(b0.srcW == e.lx->engine.mapWidth() && b0.srcH == e.lx->engine.mapHeight());
 	CHECK(b0.dr - b0.dl == e.lx->engine.blitWidth() && b0.db - b0.dt == e.lx->engine.blitHeight());
-	CHECK(DarkEdif::g_alphaWriteOnOpaqueSurface == 0);        // the mask surface was created with alpha = true
 	const DarkEdif::Surface* mask = DarkEdif::g_lastBlitSource;
 	CHECK(mask && mask->hasAlpha && mask->w == (size_t)e.lx->engine.mapWidth());
-	// alpha = darkness: bright at the light, fully dark far away, nothing else in the mask is non-black
-	const int cx = (210 / 2) - e.lx->engine.originPxX() / 2, cy = (150 / 2) - e.lx->engine.originPxY() / 2;
-	CHECK(alphaOf(mask->pix[(size_t)cy * mask->w + cx]) < 20);
-	CHECK(alphaOf(mask->pix[0]) == 255);
-	bool allBlack = true; for (auto c : mask->pix) if ((c & 0x00FFFFFF) != 0) allBlack = false;
-	CHECK(allBlack);
+	CHECK(mask->transparencyFromAlpha);                        // transparency taken from the alpha plane
+	CHECK(mask->pixelsSet == 0);                               // SetPixel moves colour only, so it is never used
+	CHECK(!DarkEdif::g_blitWhileLocked && !mask->lockedAlpha); // alpha plane unlocked before the blit
+	CHECK(mask->lastFill == DarkEdif::ColorRGB(0, 0, 0));      // RGB is black
+	// the ALPHA PLANE holds the darkness (rows are padded: index with the pitch, not the width)
+	CHECK(mask->alphaPitch % 4 == 0);
+	auto A = [&](int wx, int wy) {
+		const int gx = wx / 2 - e.lx->engine.originPxX() / 2, gy = wy / 2 - e.lx->engine.originPxY() / 2;
+		return (unsigned)mask->alphaPlane[(size_t)gy * mask->alphaPitch + gx];
+	};
+	CHECK(A(210, 150) < 20);                                   // bright at the light
+	CHECK(A(0, 0) == 255);                                     // fully dark far away
+	CHECK((int)A(210, 150) == e.lx->engine.darknessAtWorld(210, 150));
+	for (std::size_t y = 0; y < mask->h; ++y)                  // padding bytes after each row are never written
+		for (int x = (int)mask->w; x < mask->alphaPitch; ++x) CHECK(mask->alphaPlane[y * mask->alphaPitch + x] == 255);
 	CHECK(e.LumenHandle() == REFLAG(0));                       // nothing changed
 
 	rh.winX = 3;                                               // camera moved: redraw requested
@@ -74,7 +81,7 @@ int main() {
 	e.SetAmbient(1.0f);
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
 	g_blits.clear(); e.LumenDisplay();
-	CHECK(alphaOf(DarkEdif::g_lastBlitSource->pix[0]) == 0);   // fully lit: transparent mask
+	CHECK(DarkEdif::g_lastBlitSource->alphaPlane[0] == 0);     // fully lit: transparent mask
 	e.SetAmbient(0.0f); e.LumenHandle();
 
 	// obstacle rectangles and layers

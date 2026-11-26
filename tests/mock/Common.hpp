@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 using TCHAR = wchar_t;
@@ -58,25 +59,48 @@ enum class BlitOperation { Copy, Blend };
 
 struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; BlitOptions flags; };
 extern std::vector<Blit> g_blits;
-extern int g_alphaWriteOnOpaqueSurface;
+extern bool g_blitWhileLocked;
 struct Surface;
 extern const Surface* g_lastBlitSource;
+template<typename T, typename C>
+class Holder {            // same shape as the SDK's: not copyable or movable, operator* returns the pointer
+	static_assert(std::is_pointer_v<T>, "T must be pointer");
+	C* clazz; T ptr; void (*deleter)(C*, T);
+public:
+	const T& operator*() const { return ptr; }
+	Holder(C* c, T p, void (d)(C*, T)) : clazz(c), ptr(p), deleter(d) {}
+	Holder(const Holder&&) = delete;
+	Holder(const Holder&) = delete;
+	~Holder() { deleter(clazz, ptr); ptr = nullptr; }
+};
 struct Surface {
 	std::size_t w, h; bool hasAlpha; long pixelsSet = 0; std::vector<std::uint32_t> pix;
-	Surface(RunHeader*, bool, bool, std::size_t w_, std::size_t h_, bool alpha) : w(w_), h(h_), hasAlpha(alpha), pix(w_ * h_, 0) {}
+	std::vector<std::uint8_t> alphaPlane; int alphaPitch = 0; bool lockedAlpha = false; int alphaLocks = 0; bool transparencyFromAlpha = false;
+	std::uint32_t lastFill = 0;
+	Surface(RunHeader*, bool, bool, std::size_t w_, std::size_t h_, bool alpha) : w(w_), h(h_), hasAlpha(alpha), pix(w_ * h_, 0) {
+		alphaPitch = (int)((w_ + 3) / 4 * 4);                  // rows are padded, like the real alpha plane
+		if (alpha) alphaPlane.assign((std::size_t)alphaPitch * h_, 255);   // Fusion starts opaque
+	}
 	Surface(const Surface&) = delete;
 	Surface(Surface&&) = delete;
-	bool FillImageWith(const SurfaceFill&) { return true; }
+	bool FillImageWith(const SurfaceFill& f) { lastFill = f.c; return true; }   // colour only: alpha plane untouched
 	bool SetTransparencyToColor(std::uint32_t) { return true; }
-	void SetPixel(Point p, std::uint32_t c, bool includeAlpha = true) {
-		++pixelsSet;
-		if (includeAlpha && !hasAlpha) ++g_alphaWriteOnOpaqueSurface;
-		if (p.x >= 0 && p.y >= 0 && (std::size_t)p.x < w && (std::size_t)p.y < h) pix[(std::size_t)p.y * w + p.x] = c;
+	void SetTransparencyToAlpha() { transparencyFromAlpha = true; }
+	bool HasAlpha() const { return hasAlpha; }
+	int GetAlphaPitch() const { return alphaPitch; }
+	Holder<std::uint8_t*, Surface> GetAlphaBytes() {
+		lockedAlpha = true; ++alphaLocks;
+		return Holder<std::uint8_t*, Surface>(this, hasAlpha ? alphaPlane.data() : nullptr, [](Surface* s, std::uint8_t*) { s->lockedAlpha = false; });
+	}
+	void SetPixel(Point p, std::uint32_t c, bool includeAlpha = true) {     // moves COLOUR only, like the real one
+		++pixelsSet; (void)includeAlpha;
+		if (p.x >= 0 && p.y >= 0 && (std::size_t)p.x < w && (std::size_t)p.y < h) pix[(std::size_t)p.y * w + p.x] = c & 0x00FFFFFF;
 	}
 	bool CopySection(Rect s, Surface&, Rect d, bool = true, BlitOptions f = BlitOptions::CopyAlpha,
 		BlitOperation op = BlitOperation::Copy, std::uint8_t coef = 0) const {
 		g_blits.push_back({ s.right - s.left, s.bottom - s.top, d.left, d.top, d.right, d.bottom, op, coef, f });
 		g_lastBlitSource = this;
+		g_blitWhileLocked = g_blitWhileLocked || lockedAlpha;
 		return true;
 	}
 	static Surface& CreateFromMainWindow(RunHeader*) { static Surface s(nullptr, false, false, 640, 480, false); return s; }

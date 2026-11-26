@@ -23,7 +23,8 @@ struct LumenState {
 	std::string lastError;
 	std::wstring scratchW;           // backing store for text expressions
 	double lastRenderMs = 0, lastMaskMs = 0;
-	int casters = 0;
+	bool maskHasAlpha = false;
+	int alphaPitch = 0;
 
 	LumenState(int fw, int fh, const lumen::Engine::Settings& s) : engine(fw, fh, s), frameW(fw), frameH(fh) {}
 	~LumenState();
