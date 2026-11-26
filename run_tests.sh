@@ -19,10 +19,8 @@ PY
 INC="-Itests/mock -Icore -Iextension -I$GEN"
 $CXX -std=c++17 -O2 -Wall -Wextra -o /tmp/lumen_core_tests tests/test_core.cpp core/lumen.cpp
 /tmp/lumen_core_tests
-for DEFS in "-DFUSION_INTERNAL_ACCESS" "-DFUSION_INTERNAL_ACCESS -DLUMEN_OBJECT_ACCESS"; do
-  echo "extension mock test: $DEFS"
-  $CXX -std=c++17 -O1 -Wall -Wextra -Wno-unused-parameter $DEFS $INC -o /tmp/lumen_ext_tests tests/test_ext.cpp extension/LumenExt.cpp core/lumen.cpp
-  /tmp/lumen_ext_tests
-done
+echo "extension mock test"
+$CXX -std=c++17 -O1 -Wall -Wextra -Wno-unused-parameter -DFUSION_INTERNAL_ACCESS $INC -o /tmp/lumen_ext_tests tests/test_ext.cpp extension/LumenExt.cpp core/lumen.cpp
+/tmp/lumen_ext_tests
 python3 ci/test_assemble.py | tail -1
 rm -rf "$GEN"

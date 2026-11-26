@@ -1,6 +1,5 @@
-// Lumen: the Fusion-facing layer. Everything here that touches DarkEdif was taken from the
-// "what works" list in the field notes; anything not on that list sits behind a build flag
-// (LUMEN_OBJECT_ACCESS) and is marked UNVERIFIED.
+// Lumen: the Fusion-facing layer. Every SDK call here was checked against the SDK headers uploaded from a CI run
+// (SurfaceMultiPlat.hpp, MMFWindowsMasterHeader.hpp, Edif.hpp).
 #include "Common.hpp"
 #include <algorithm>
 #include <chrono>
@@ -11,88 +10,64 @@
 
 static_assert(sizeof(TCHAR) == sizeof(wchar_t), "Lumen is built for the Unicode configurations only");
 
-// Surface, SurfaceFill, ColorRGB, BlitOptions and BlitOperation live in the DarkEdif namespace in this SDK.
+// Surface, SurfaceFill, ColorRGB, BlitOptions, Point and Rect live in the DarkEdif namespace in this SDK.
 using namespace DarkEdif;
 
 // ------------------------------------------------------------------ graphics
 
+// The darkness is ONE CPU surface with per-pixel alpha (black, alpha = darkness), written pixel by pixel and
+// blitted over the window with the alpha applied. Surface(..., alpha = true) is documented as "per-pixel variable
+// transparency"; CopySection applies source alpha unless BlitOptions::CopyAlpha is set (that flag copies it instead).
 struct LumenGfx {
-	// Darkness is drawn as `levels` CPU surfaces, one per opacity band. Each holds black pixels where
-	// the lightmap darkness falls in that band and a magenta colour key elsewhere, and is blitted with a
-	// uniform Blend coefficient. This uses only calls the field notes confirm work (SetPixel without
-	// alpha, colour-key transparency, CopySection with Blend); no per-pixel alpha is required.
-	std::vector<std::unique_ptr<Surface>> bands;   // index 1..levels
-	std::vector<int> count;
-	std::vector<char> dirty;
-	int mw = 0, mh = 0, levels = 0;
+	std::unique_ptr<Surface> mask;
+	int mw = 0, mh = 0;
 };
 
 LumenState::~LumenState() { delete gfx; }
 
-static void ensureBands(Extension& e, LumenState& S, int mw, int mh) {
+static void ensureMask(Extension& e, LumenState& S, int mw, int mh) {
 	if (!S.gfx) S.gfx = new LumenGfx();
 	LumenGfx& G = *S.gfx;
-	if (G.mw == mw && G.mh == mh && G.levels == S.shadeLevels && !G.bands.empty()) return;
-	G.bands.clear();
-	G.bands.resize(S.shadeLevels + 1);
-	G.count.assign(S.shadeLevels + 1, 0);
-	G.dirty.assign(S.shadeLevels + 1, 0);
-	for (int b = 1; b <= S.shadeLevels; ++b) {
-		G.bands[b] = std::make_unique<Surface>(e.rhPtr, true, false, mw, mh, false);
-		G.bands[b]->FillImageWith(SurfaceFill::Solid(ColorRGB(255, 0, 255)));
-		G.bands[b]->SetTransparencyToColor(ColorRGB(255, 0, 255) & 0x00FFFFFF);
-	}
-	G.mw = mw; G.mh = mh; G.levels = S.shadeLevels;
-	S.bandsDirty = true;
+	if (G.mask && G.mw == mw && G.mh == mh) return;
+	G.mask = std::make_unique<Surface>(e.rhPtr, true, false, mw, mh, true);
+	G.mw = mw; G.mh = mh;
+	S.maskDirty = true;
 }
 
-static void rebuildBands(Extension& e, LumenState& S) {
+static void rebuildMask(Extension& e, LumenState& S) {
+	const auto t0 = std::chrono::steady_clock::now();
 	const std::vector<uint32_t>& px = S.engine.pixels();
 	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
 	if (px.size() != (size_t)mw * mh) return;
-	ensureBands(e, S, mw, mh);
-	LumenGfx& G = *S.gfx;
-	const int K = G.levels;
-	for (int b = 1; b <= K; ++b) {
-		if (G.dirty[b]) {
-			G.bands[b]->FillImageWith(SurfaceFill::Solid(ColorRGB(255, 0, 255)));
-			G.dirty[b] = 0;
-		}
-		G.count[b] = 0;
-	}
-	const auto black = ColorRGB(0, 0, 0);
+	ensureMask(e, S, mw, mh);
+	Surface& m = *S.gfx->mask;
 	for (int y = 0; y < mh; ++y)
-		for (int x = 0; x < mw; ++x) {
-			const int a = (int)(px[(size_t)y * mw + x] >> 24);
-			const int b = (a * K + 127) / 255;
-			if (b <= 0) continue;
-			G.bands[b]->SetPixel(Point(x, y), black, false);   // SetPixel defaults includeAlpha to true; these surfaces have no alpha
-			++G.count[b];
-			G.dirty[b] = 1;
-		}
+		for (int x = 0; x < mw; ++x)
+			m.SetPixel(Point(x, y), px[(size_t)y * mw + x], true);   // 0xAA000000: black with alpha AA (rgb is 0, so premultiplication is moot)
+	S.lastMaskMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// ------------------------------------------------------------------ objects (HeaderObject coordinates are frame pixels)
+
+static bool objPos(Extension& e, long fixed, float& x, float& y) {
+	RunObject* ro = e.Runtime.RunObjPtrFromFixed((int)fixed);
+	if (!ro) return false;
+	HeaderObject* h = ro->get_rHo();
+	x = (float)h->get_X();
+	y = (float)h->get_Y();
+	return true;
+}
+
+static bool objRect(Extension& e, long fixed, lumen::IRect& r) {
+	RunObject* ro = e.Runtime.RunObjPtrFromFixed((int)fixed);
+	if (!ro) return false;
+	HeaderObject* h = ro->get_rHo();
+	const int left = h->get_X() - h->get_ImgXSpot(), top = h->get_Y() - h->get_ImgYSpot();
+	r = { left, top, left + h->get_ImgWidth(), top + h->get_ImgHeight() };
+	return true;
 }
 
 // ------------------------------------------------------------------ frame loop
-
-#ifdef LUMEN_OBJECT_ACCESS
-// UNVERIFIED: Runtime.RunObjPtrFromFixed and the hoRect / get_X accessors are written from memory of the
-// DarkEdif headers and have not been compiled. Enable with the workflow's "object_access" input, then
-// read the compile errors if any.
-static bool lumenObjPos(Extension& e, long fixed, float& x, float& y) {
-	RunObject* ro = e.Runtime.RunObjPtrFromFixed((int)fixed);
-	if (!ro) return false;
-	x = (float)ro->get_rHo()->get_X();
-	y = (float)ro->get_rHo()->get_Y();
-	return true;
-}
-static bool lumenObjRect(Extension& e, long fixed, const lumen::View& v, lumen::IRect& r) {
-	RunObject* ro = e.Runtime.RunObjPtrFromFixed((int)fixed);
-	if (!ro) return false;
-	const RECT rc = ro->get_rHo()->hoRect;   // window coordinates per the field notes; converted to frame coordinates
-	r = { (int)rc.left + v.camX, (int)rc.top + v.camY, (int)rc.right + v.camX, (int)rc.bottom + v.camY };
-	return true;
-}
-#endif
 
 void Extension::LumenInit(bool backdropObstacles, const std::wstring& pixelSize, int objW, int objH) {
 	lumen::Engine::Settings st;
@@ -135,12 +110,12 @@ REFLAG Extension::LumenHandle() {
 	v.camY = rhPtr->get_WindowY();
 	v.width = S.winW;
 	v.height = S.winH;
-#ifdef LUMEN_OBJECT_ACCESS
-	S.engine.updateAttachments([this](long o, float& x, float& y) { return lumenObjPos(*this, o, x, y); });
-	S.engine.updateCasters([this, &v](long o, lumen::IRect& r) { return lumenObjRect(*this, o, v, r); });
-#endif
+
+	S.engine.updateAttachments([this](long o, float& x, float& y) { return objPos(*this, o, x, y); });
+	S.engine.updateCasters([this](long o, lumen::IRect& r) { return objRect(*this, o, r); });
+
 	const bool changed = S.engine.render(v);
-	if (changed) S.bandsDirty = true;
+	if (changed) S.maskDirty = true;
 	const bool camMoved = v.camX != S.lastCamX || v.camY != S.lastCamY;
 	if (camMoved) Runtime.SetPosition(v.camX, v.camY);   // keeps Fusion treating the object as on screen
 	S.lastCamX = v.camX; S.lastCamY = v.camY;
@@ -154,32 +129,19 @@ REFLAG Extension::LumenDisplay() {
 	if (!lx) return (REFLAG)0;
 	LumenState& S = *lx;
 	if (S.engine.pixels().empty()) return (REFLAG)0;
-	if (S.bandsDirty) { rebuildBands(*this, S); S.bandsDirty = false; }
-	if (!S.gfx || S.gfx->bands.empty()) return (REFLAG)0;
+	if (S.maskDirty) { rebuildMask(*this, S); S.maskDirty = false; }
+	if (!S.gfx || !S.gfx->mask) return (REFLAG)0;
 	LumenGfx& G = *S.gfx;
 
-	Surface& D = Surface::CreateFromMainWindow(rhPtr);   // returns a reference to Fusion's frame surface
+	Surface& D = Surface::CreateFromMainWindow(rhPtr);   // a reference to Fusion's frame surface
 	// Camera read at draw time (no one-tick lag); the lightmap itself was built in Handle().
 	const int x0 = S.engine.originPxX() - rhPtr->get_WindowX(), y0 = S.engine.originPxY() - rhPtr->get_WindowY();
-	const int x1 = x0 + S.engine.blitWidth(), y1 = y0 + S.engine.blitHeight();
-	const int K = G.levels;
-	S.bandBlits = 0;
 	// Rect(l, t, r, b) rejects negative coordinates unless allowNeg is true, and our destination can start off screen.
 	const Rect src(0, 0, G.mw, G.mh);
-	const Rect dst(x0, y0, x1, y1, true);
-	const BlitOptions flags = S.copyAlpha ? BlitOptions::CopyAlpha : BlitOptions::None;
-	for (int b = 1; b <= K; ++b) {
-		if (!G.count[b]) continue;
-		++S.bandBlits;
-		if (b == K) {   // fully dark: plain colour-keyed copy, independent of blend-coefficient direction
-			G.bands[b]->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
-			continue;
-		}
-		const double opacity = (double)b / K;
-		int coef = (int)std::lround((S.invertBlend ? opacity : 1.0 - opacity) * 128.0);
-		coef = (std::max)(0, (std::min)(128, coef));
-		G.bands[b]->CopySection(src, D, dst, true, flags, BlitOperation::Blend, (std::uint8_t)coef);
-	}
+	const Rect dst(x0, y0, x0 + S.engine.blitWidth(), y0 + S.engine.blitHeight(), true);
+	BlitOptions flags = S.smooth ? BlitOptions::AntiAliasing : BlitOptions::None;
+	if (S.copyAlpha) flags = flags | BlitOptions::CopyAlpha;
+	G.mask->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
 	return (REFLAG)0;
 }
 
@@ -222,57 +184,41 @@ void Extension::SetLightBrightness(int p0, float p1) { if (!lx->engine.setBright
 void Extension::SetLightFalloff(int p0, float p1) { if (!lx->engine.setFalloff(p0, p1)) fail(*lx, "Falloff: no such light", p0); }
 void Extension::SetLightEnabled(int p0, int p1) { if (!lx->engine.setEnabled(p0, p1 != 0)) fail(*lx, "Enable: no such light", p0); }
 
-void Extension::AttachLightToObject(int p0, int p1, float p2, float p3, int p4) {
-#ifdef LUMEN_OBJECT_ACCESS
-	if (!lx->engine.attach(p0, p1, p2, p3, p4 != 0)) fail(*lx, "Attach: no such light", p0);
-#else
-	(void)p0; (void)p1; (void)p2; (void)p3; (void)p4;
-	lx->lastError = "Object access is not enabled in this build (see README, stage 2)";
-#endif
+// Object parameters: Fusion calls these once for every selected instance of the chosen object.
+void Extension::CreateLightOnObject(int p0, RunObject* p1, float p2, float p3, int p4, float p5, float p6) {
+	if (!p1) return;
+	const long fixed = Runtime.FixedFromRunObjPtr(p1);
+	float ox = 0, oy = 0;
+	if (!objPos(*this, fixed, ox, oy)) { lx->lastError = "Create light on object: object not found"; return; }
+	CreateLight(p0, ox + p5, oy + p6, p2, p3, p4);
+	lx->engine.attach(lx->lastLightId, fixed, p5, p6, true);   // follows the object; deleted when the object is destroyed
+}
+
+void Extension::AttachLightToObject(int p0, RunObject* p1, float p2, float p3) {
+	if (!p1) return;
+	if (!lx->engine.attach(p0, Runtime.FixedFromRunObjPtr(p1), p2, p3, true)) fail(*lx, "Attach: no such light", p0);
 }
 
 void Extension::DetachLight(int p0) { if (!lx->engine.detach(p0)) fail(*lx, "Detach: no such light", p0); }
-
-void Extension::CreateLightOnObject(int p0, int p1, float p2, float p3, int p4, float p5, float p6) {
-#ifdef LUMEN_OBJECT_ACCESS
-	float ox = 0, oy = 0;
-	if (!lumenObjPos(*this, p1, ox, oy)) { lx->lastError = "CreateLightOnObject: object not found"; return; }
-	CreateLight(p0, ox + p5, oy + p6, p2, p3, p4);
-	AttachLightToObject(lx->lastLightId, p1, p5, p6, 1);
-#else
-	(void)p0; (void)p1; (void)p2; (void)p3; (void)p4; (void)p5; (void)p6;
-	lx->lastError = "Object access is not enabled in this build (see README, stage 2)";
-#endif
-}
 
 void Extension::AddObstacleRect(int p0, int p1, int p2, int p3, int p4) {
 	lx->engine.addObstacle(lyr(p0), lumen::IRect{ p1, p2, p1 + p3, p2 + p4 });
 }
 void Extension::ClearObstacles(int p0) { lx->engine.clearObstacles(lyr(p0)); }
 
-void Extension::AddShadowCasterObject(int p0, int p1) {
-#ifdef LUMEN_OBJECT_ACCESS
-	lx->engine.addCaster(p0, lyr(p1));
-#else
-	(void)p0; (void)p1;
-	lx->lastError = "Object access is not enabled in this build (see README, stage 2)";
-#endif
+void Extension::AddShadowCasterObject(RunObject* p0, int p1) {
+	if (p0) lx->engine.addCaster(Runtime.FixedFromRunObjPtr(p0), lyr(p1));
 }
-void Extension::RemoveShadowCasterObject(int p0) {
-#ifdef LUMEN_OBJECT_ACCESS
-	lx->engine.removeCaster(p0);
-#else
-	(void)p0;
-#endif
+void Extension::RemoveShadowCasterObject(RunObject* p0) {
+	if (p0) lx->engine.removeCaster(Runtime.FixedFromRunObjPtr(p0));
 }
 
-void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->bandsDirty = true; lx->forceRedraw = true; }
+void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->maskDirty = true; lx->forceRedraw = true; }
 
-void Extension::SetRenderOptions(int p0, int p1, int p2) {
-	lx->shadeLevels = (std::max)(2, (std::min)(64, p0));
-	lx->invertBlend = p1 != 0;
-	lx->copyAlpha = p2 != 0;
-	lx->bandsDirty = true; lx->forceRedraw = true;
+void Extension::SetRenderOptions(int p0, int p1) {
+	lx->smooth = p0 != 0;
+	lx->copyAlpha = p1 != 0;
+	lx->forceRedraw = true;
 }
 
 // ------------------------------------------------------------------ conditions
@@ -293,19 +239,13 @@ float Extension::Ambient() { return lx->engine.ambient(); }
 const TCHAR* Extension::DebugInfo() {
 	LumenState& S = *lx;
 	const lumen::Stats& st = S.engine.stats();
-	char b[400];
+	char b[420];
 	std::snprintf(b, sizeof b,
-		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, map %dx%d div %d, levels %d, band blits %d, "
-		"blit %d,%d %dx%d, handle %.2f ms, object access %s",
+		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, lightmap %dx%d at pixel size %d, "
+		"window %dx%d, handle %.2f ms, mask upload %.2f ms, smooth %d, copyalpha %d",
 		st.lightsTotal, st.lightsVisible, st.lightsRecomputed, st.raysCast, st.composes,
-		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor, S.shadeLevels, S.bandBlits,
-		S.engine.blitX(), S.engine.blitY(), S.engine.blitWidth(), S.engine.blitHeight(), S.lastRenderMs,
-#ifdef LUMEN_OBJECT_ACCESS
-		"on"
-#else
-		"off"
-#endif
-	);
+		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor,
+		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
 	return text(S, b);
 }
 

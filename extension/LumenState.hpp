@@ -1,4 +1,4 @@
-// Lumen: per-object runtime state. Included by Extension.hpp (patched in by ci/assemble.ps1).
+// Lumen: per-object runtime state. Included by Extension.hpp (patched in by ci/assemble.py).
 // Deliberately free of Fusion/DarkEdif types so it can be included anywhere.
 #pragma once
 #include "lumen.hpp"
@@ -10,21 +10,20 @@ struct LumenGfx;   // Fusion surfaces; defined in LumenExt.cpp
 struct LumenState {
 	lumen::Engine engine;
 	LumenGfx* gfx = nullptr;
-	bool backdropObstacles = true;   // reserved: backdrop import arrives in a later version
-	bool bandsDirty = true;          // lightmap changed; rebuild band surfaces before drawing
+	bool backdropObstacles = true;   // reserved: backdrops cannot be read safely yet
+	bool maskDirty = true;           // lightmap changed; rewrite the alpha surface before drawing
 	bool forceRedraw = true;
 	int winW = 640, winH = 480;
 	int objW = 0, objH = 0;          // size last given to the run object (manual display needs one)
 	int frameW = 0, frameH = 0;
 	int lastCamX = -999999, lastCamY = -999999;
-	int shadeLevels = 16;            // darkness is quantised into this many opacity bands
-	bool invertBlend = false;        // flips the Blend coefficient direction if Fusion's is reversed
-	bool copyAlpha = true;           // BlitOptions::CopyAlpha (the SDK default) versus None
+	bool smooth = true;              // BlitOptions::AntiAliasing: smooth stretching of the lightmap
+	bool copyAlpha = false;          // BlitOptions::CopyAlpha COPIES alpha instead of applying it, so it is off
 	int lastLightId = 0, nextAutoId = 1;
 	std::string lastError;
 	std::wstring scratchW;           // backing store for text expressions
-	double lastRenderMs = 0;
-	int bandBlits = 0;
+	double lastRenderMs = 0, lastMaskMs = 0;
+	int casters = 0;
 
 	LumenState(int fw, int fh, const lumen::Engine::Settings& s) : engine(fw, fh, s), frameW(fw), frameH(fh) {}
 	~LumenState();

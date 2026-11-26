@@ -19,62 +19,70 @@ NAME = "Lumen"
 AUTHOR = "Lumen contributors"
 COMMENT = "Fast 2D lighting with shadows: ambient darkness, many lights, obstacle and object shadows."
 
-I, F, T = "Integer", "Float", "Text"
-CTYPE = {I: "int", F: "float", T: "const TCHAR*"}
+I, F, T, O = "Integer", "Float", "Text", "Object"
+CTYPE = {I: "int", F: "float", T: "const TCHAR*", O: "RunObject*"}
 
-# (cpp function, title, [(type, parameter name)], menu group)
-# Action titles use %0, %1... for parameters. IDs are list positions: only ever append.
+from collections import namedtuple
+# Action:     fn, menu label, event-editor sentence (%0, %1... = parameters), parameters, menu group
+# Condition:  fn, menu label, sentence ("%o :" = the object's name), parameters, is trigger, menu group
+# Expression: fn, menu label, name typed in expressions (ends with "(" ; "$(" for text), return type, parameters, group
+# IDs are list positions: only ever append once released.
+Act = namedtuple("Act", "fn label title params group")
+Cond = namedtuple("Cond", "fn label title params trigger group")
+Exp = namedtuple("Exp", "fn label title ret params group")
+
 ACTIONS = [
- ("SetAmbient", "Set ambient light to %0", [(F, "Level (0 = pitch black, 1 = fully lit)")], "Ambient"),
- ("CreateLight", "Create or update light %0 at (%1, %2), radius %3, brightness %4, on layer %5",
-  [(I, "Light ID (-1 = assign automatically)"), (F, "X (frame pixels)"), (F, "Y (frame pixels)"),
-   (F, "Radius (pixels)"), (F, "Brightness (0-1)"), (I, "Collision layer (1-based Fusion layer)")], "Lights"),
- ("DeleteLight", "Delete light %0", [(I, "Light ID")], "Lights"),
- ("DeleteAllLights", "Delete all lights", [], "Lights"),
- ("SetLightPosition", "Move light %0 to (%1, %2)", [(I, "Light ID"), (F, "X"), (F, "Y")], "Lights"),
- ("SetLightRadius", "Set light %0 radius to %1", [(I, "Light ID"), (F, "Radius (pixels)")], "Lights"),
- ("SetLightBrightness", "Set light %0 brightness to %1", [(I, "Light ID"), (F, "Brightness (0-1)")], "Lights"),
- ("SetLightFalloff", "Set light %0 falloff exponent to %1 (1 = linear, 2 = soft)", [(I, "Light ID"), (F, "Exponent")], "Lights"),
- ("SetLightEnabled", "Set light %0 on/off: %1 (1 = on, 0 = off)", [(I, "Light ID"), (I, "On (1) / Off (0)")], "Lights"),
- ("AttachLightToObject", "Attach light %0 to object %1 (offset %2, %3; delete with object: %4)",
-  [(I, "Light ID"), (I, "Object (use Fixed(\"object\"))"), (F, "Offset X"), (F, "Offset Y"), (I, "Delete light when object is destroyed (1/0)")], "Objects"),
- ("DetachLight", "Detach light %0 from its object", [(I, "Light ID")], "Objects"),
- ("CreateLightOnObject", "Create light %0 on object %1 (radius %2, brightness %3, layer %4, offset %5, %6)",
-  [(I, "Light ID (-1 = assign automatically)"), (I, "Object (use Fixed(\"object\"))"), (F, "Radius (pixels)"),
-   (F, "Brightness (0-1)"), (I, "Collision layer (1-based Fusion layer)"), (F, "Offset X"), (F, "Offset Y")], "Objects"),
- ("AddObstacleRect", "Add obstacle on layer %0 at (%1, %2) size %3 x %4",
-  [(I, "Layer"), (I, "X"), (I, "Y"), (I, "Width"), (I, "Height")], "Shadows"),
- ("ClearObstacles", "Clear all obstacles on layer %0", [(I, "Layer")], "Shadows"),
- ("AddShadowCasterObject", "Make object %0 cast shadows on layer %1",
-  [(I, "Object (use Fixed(\"object\"))"), (I, "Layer")], "Shadows"),
- ("RemoveShadowCasterObject", "Stop object %0 casting shadows", [(I, "Object (use Fixed(\"object\"))")], "Shadows"),
- ("SetQuality", "Set lightmap pixel size to %0 x %0 screen pixels (1 = sharpest, 4 = fast)", [(I, "Pixel size (1-16)")], "Quality"),
- ("SetRenderOptions", "Debug: set shade levels to %0, invert blend: %1, copy alpha: %2",
-  [(I, "Shade levels (2-64)"), (I, "Invert blend coefficient (1/0)"), (I, "Copy alpha blit flag (1/0)")], "Quality"),
+ Act("SetAmbient", "Set ambient light level", "Set ambient light level to %0 (0 = pitch black, 1 = fully lit)",
+     [(F, "Ambient level (0 to 1)")], "Ambient light"),
+ Act("CreateLight", "Create or update light", "Create light %0 at X=%1, Y=%2 (radius %3, brightness %4, shadow layer %5)",
+     [(I, "Light ID (-1 = pick one automatically)"), (F, "X position"), (F, "Y position"), (F, "Radius in pixels"),
+      (F, "Brightness (0 to 1)"), (I, "Shadow layer (Fusion layer number)")], "Lights"),
+ Act("DeleteLight", "Delete light", "Delete light %0", [(I, "Light ID")], "Lights"),
+ Act("DeleteAllLights", "Delete all lights", "Delete all lights", [], "Lights"),
+ Act("SetLightPosition", "Move light", "Move light %0 to X=%1, Y=%2", [(I, "Light ID"), (F, "X position"), (F, "Y position")], "Lights"),
+ Act("SetLightRadius", "Set light radius", "Set radius of light %0 to %1 pixels", [(I, "Light ID"), (F, "Radius in pixels")], "Lights"),
+ Act("SetLightBrightness", "Set light brightness", "Set brightness of light %0 to %1", [(I, "Light ID"), (F, "Brightness (0 to 1)")], "Lights"),
+ Act("SetLightFalloff", "Set light falloff", "Set falloff of light %0 to %1 (1 = linear, 2 = smooth, higher = tighter)",
+     [(I, "Light ID"), (F, "Falloff")], "Lights"),
+ Act("SetLightEnabled", "Turn light on or off", "Turn light %0 on or off: %1 (1 = on, 0 = off)", [(I, "Light ID"), (I, "On (1) or off (0)")], "Lights"),
+ Act("CreateLightOnObject", "Create light on object",
+     "Create light %0 on %1 (radius %2, brightness %3, shadow layer %4, offset X=%5, Y=%6)",
+     [(I, "Light ID (-1 = pick one automatically)"), (O, "Object to attach the light to"), (F, "Radius in pixels"),
+      (F, "Brightness (0 to 1)"), (I, "Shadow layer (Fusion layer number)"), (F, "Offset X"), (F, "Offset Y")], "Objects"),
+ Act("AttachLightToObject", "Attach existing light to object", "Attach light %0 to %1 (offset X=%2, Y=%3)",
+     [(I, "Light ID"), (O, "Object to follow"), (F, "Offset X"), (F, "Offset Y")], "Objects"),
+ Act("DetachLight", "Detach light from object", "Detach light %0 from its object", [(I, "Light ID")], "Objects"),
+ Act("AddObstacleRect", "Add obstacle rectangle", "Add obstacle on shadow layer %0 at X=%1, Y=%2, size %3 x %4",
+     [(I, "Shadow layer (Fusion layer number)"), (I, "X position"), (I, "Y position"), (I, "Width"), (I, "Height")], "Shadows"),
+ Act("ClearObstacles", "Clear obstacles on a layer", "Clear all obstacle rectangles on shadow layer %0", [(I, "Shadow layer (Fusion layer number)")], "Shadows"),
+ Act("AddShadowCasterObject", "Make object cast shadows", "Make %0 cast shadows on shadow layer %1",
+     [(O, "Object that casts shadows"), (I, "Shadow layer (Fusion layer number)")], "Shadows"),
+ Act("RemoveShadowCasterObject", "Stop object casting shadows", "Stop %0 casting shadows", [(O, "Object")], "Shadows"),
+ Act("SetQuality", "Set lightmap pixel size", "Set lightmap pixel size to %0 (1 = sharpest, 4 = fastest)", [(I, "Pixel size (1 to 16)")], "Settings"),
+ Act("SetRenderOptions", "Debug: render options", "Debug: smooth edges %0 (1/0), copy-alpha blit flag %1 (1/0)",
+     [(I, "Smooth edges (1/0)"), (I, "Copy-alpha blit flag (1/0)")], "Settings"),
 ]
 
 CONDITIONS = [
- # (cpp function, title, params, triggered, group)
- ("OnLightCreated", "On light created", [], True, "Lights"),
- ("LightExists", "Light %0 exists", [(I, "Light ID")], False, "Lights"),
+ Cond("OnLightCreated", "On light created", "%o : On light created", [], True, "Lights"),
+ Cond("LightExists", "Light exists", "%o : Light %0 exists", [(I, "Light ID")], False, "Lights"),
 ]
 
 EXPRESSIONS = [
- # (cpp function, title (ends with "("), returns, params, group)
- ("LightCount", "LightCount(", I, [], "Lights"),
- ("LastLightID", "LastLightID(", I, [], "Lights"),
- ("LightX", "LightX(", F, [(I, "Light ID")], "Lights"),
- ("LightY", "LightY(", F, [(I, "Light ID")], "Lights"),
- ("LightRadius", "LightRadius(", F, [(I, "Light ID")], "Lights"),
- ("LightBrightness", "LightBrightness(", F, [(I, "Light ID")], "Lights"),
- ("Ambient", "Ambient(", F, [], "Ambient"),
- ("DebugInfo", "DebugInfo$(", T, [], "Debug"),
- ("LastError", "LastError$(", T, [], "Debug"),
+ Exp("LightCount", "Number of lights", "NumberOfLights(", I, [], "Lights"),
+ Exp("LastLightID", "ID of the last created light", "LastCreatedLightID(", I, [], "Lights"),
+ Exp("LightX", "Light X position", "LightX(", F, [(I, "Light ID")], "Lights"),
+ Exp("LightY", "Light Y position", "LightY(", F, [(I, "Light ID")], "Lights"),
+ Exp("LightRadius", "Light radius", "LightRadius(", F, [(I, "Light ID")], "Lights"),
+ Exp("LightBrightness", "Light brightness", "LightBrightness(", F, [(I, "Light ID")], "Lights"),
+ Exp("Ambient", "Ambient light level", "AmbientLevel(", F, [], "Ambient light"),
+ Exp("DebugInfo", "Debug information", "DebugInfo$(", T, [], "Debug"),
+ Exp("LastError", "Last error message", "LastError$(", T, [], "Debug"),
 ]
 
 PROPERTIES = [   # kinds below exist in the template's own example properties ("Checkbox", "Editbox String")
  # (kind, title, info, default, items)
- ("checkbox", "Backdrop obstacles", "Backdrop objects with an obstacle type cast shadows (reserved; imported in a later version)", True, None),
+ ("checkbox", "Backdrop obstacles", "Reserved for a later version: backdrops cannot cast shadows yet. Use Add obstacle rectangle or Make object cast shadows", True, None),
  ("string", "Pixel size", "Lightmap pixel size in screen pixels (1-8). 1 is sharpest and slowest, 4 is a good fast setting", "2", None),
 ]
 
@@ -132,14 +140,14 @@ def load_jsonc(text):
         sys.exit("Could not parse the template DarkExt.json (%s). Context after comment removal:\n%s" % (e, ctx))
 
 
-def menu(entries, group_of):
-    """Nested menu in DarkEdif format: ["Group", [id, "Name"], ...] per group, keeping first-seen group order."""
+def menu(entries, group_of, label_of):
+    """Menu in DarkEdif format: one ["Group", [id, "Label"], ...] submenu per group, in first-seen order."""
     groups, order = {}, []
     for i, e in enumerate(entries):
         g = group_of(e)
         if g not in groups:
             groups[g] = []; order.append(g)
-        groups[g].append([i, e[1] if not e[1].endswith("(") else e[1]])
+        groups[g].append([i, label_of(e)])
     return [[g] + groups[g] for g in order]
 
 
@@ -216,19 +224,19 @@ def build_lang(tmpl):
         return v if isinstance(v, list) else []
     pa, pc, pe = proto(lst("Actions")), proto(lst("Conditions")), proto(lst("Expressions"))
     acts, conds, exprs = [], [], []
-    for fn, title, params, _g in ACTIONS:
-        a = copy.deepcopy(pa); a[K(a, "Title")] = title
-        a[K(a, "Parameters")] = clone_params(pa.get(K(pa, "Parameters"), []), params); acts.append(a)
-    for fn, title, params, trig, _g in CONDITIONS:
-        c = copy.deepcopy(pc); c[K(c, "Title")] = title; c[K(c, "Triggered")] = trig
-        c[K(c, "Parameters")] = clone_params(pc.get(K(pc, "Parameters"), []), params); conds.append(c)
-    for fn, title, ret, params, _g in EXPRESSIONS:
-        e = copy.deepcopy(pe); e[K(e, "Title")] = title; e[K(e, "Returns")] = ret
-        e[K(e, "Parameters")] = clone_params(pe.get(K(pe, "Parameters"), []), params); exprs.append(e)
+    for a_ in ACTIONS:
+        a = copy.deepcopy(pa); a[K(a, "Title")] = a_.title
+        a[K(a, "Parameters")] = clone_params(pa.get(K(pa, "Parameters"), []), a_.params); acts.append(a)
+    for c_ in CONDITIONS:
+        c = copy.deepcopy(pc); c[K(c, "Title")] = c_.title; c[K(c, "Triggered")] = c_.trigger
+        c[K(c, "Parameters")] = clone_params(pc.get(K(pc, "Parameters"), []), c_.params); conds.append(c)
+    for e_ in EXPRESSIONS:
+        e = copy.deepcopy(pe); e[K(e, "Title")] = e_.title; e[K(e, "Returns")] = e_.ret
+        e[K(e, "Parameters")] = clone_params(pe.get(K(pe, "Parameters"), []), e_.params); exprs.append(e)
     j[K(j, "Actions")], j[K(j, "Conditions")], j[K(j, "Expressions")] = acts, conds, exprs
-    j[K(j, "ActionMenu")] = menu(ACTIONS, lambda e: e[3])
-    j[K(j, "ConditionMenu")] = menu(CONDITIONS, lambda e: e[4])
-    j[K(j, "ExpressionMenu")] = menu(EXPRESSIONS, lambda e: e[4])
+    j[K(j, "ActionMenu")] = menu(ACTIONS, lambda e: e.group, lambda e: e.label)
+    j[K(j, "ConditionMenu")] = menu(CONDITIONS, lambda e: e.group, lambda e: e.label)
+    j[K(j, "ExpressionMenu")] = menu(EXPRESSIONS, lambda e: e.group, lambda e: e.label)
     tm = tmpl.get(K(tmpl, "ActionMenu"))
     # the template's menus hold [id, "Name"] items, "---" separators and ["Submenu", [id, "Name"], ...] groups
     if tm and not any(isinstance(e, list) and e and isinstance(e[0], (int, str)) for e in tm):
@@ -286,17 +294,17 @@ def members_inc():
     L += ["std::unique_ptr<LumenState> lx;",
           "void LumenInit(bool backdropObstacles, const std::wstring& pixelSize, int objW, int objH);",
           "REFLAG LumenHandle();", "REFLAG LumenDisplay();", ""]
-    L += ["// Actions"] + [decl("void", a[0], a[2]) for a in ACTIONS]
-    L += ["// Conditions"] + [decl("bool", c[0], c[2]) for c in CONDITIONS]
-    L += ["// Expressions"] + [decl({I: "int", F: "float", T: "const TCHAR*"}[e[2]], e[0], e[3]) for e in EXPRESSIONS]
+    L += ["// Actions"] + [decl("void", a.fn, a.params) for a in ACTIONS]
+    L += ["// Conditions"] + [decl("bool", c.fn, c.params) for c in CONDITIONS]
+    L += ["// Expressions"] + [decl({I: "int", F: "float", T: "const TCHAR*"}[e.ret], e.fn, e.params) for e in EXPRESSIONS]
     return "\n".join(L) + "\n"
 
 
 def ctor_inc():
     L = ["// Generated by gen_ext_json.py. Included inside the Extension constructor. Do not edit."]
-    L += ["LinkAction(%d, %s);" % (i, a[0]) for i, a in enumerate(ACTIONS)]
-    L += ["LinkCondition(%d, %s);" % (i, c[0]) for i, c in enumerate(CONDITIONS)]
-    L += ["LinkExpression(%d, %s);" % (i, e[0]) for i, e in enumerate(EXPRESSIONS)]
+    L += ["LinkAction(%d, %s);" % (i, a.fn) for i, a in enumerate(ACTIONS)]
+    L += ["LinkCondition(%d, %s);" % (i, c.fn) for i, c in enumerate(CONDITIONS)]
+    L += ["LinkExpression(%d, %s);" % (i, e.fn) for i, e in enumerate(EXPRESSIONS)]
     L += ["LumenInit(edPtr->Props.IsPropChecked(std::string_view(\"Backdrop obstacles\")),",
           "           std::wstring(edPtr->Props.GetPropertyStr(std::string_view(\"Pixel size\"))),",
           "           (int)edPtr->objSize.width, (int)edPtr->objSize.height);"]
@@ -309,23 +317,25 @@ def docs_md():
         for i, (_t, n) in enumerate(params):
             t = t.replace("%%%d" % i, "<%s>" % n.split(" (")[0])
         return t
-    out = ["# Lumen API reference", "", "Generated from `extension/gen_ext_json.py`. IDs are list positions and never change once released.", ""]
+    out = ["# Lumen API reference", "",
+           "Generated from `extension/gen_ext_json.py`. IDs are list positions and never change once released.",
+           "Object parameters make Fusion run the action once for every selected instance of the chosen object.", ""]
     out += ["## Actions", ""]
-    for g in dict.fromkeys(a[3] for a in ACTIONS):
+    for g in dict.fromkeys(a.group for a in ACTIONS):
         out.append("### " + g)
-        for i, a in enumerate(ACTIONS):
-            if a[3] == g:
-                out.append("- **%s**" % sig(a[1], a[2]))
-                for _t, n in a[2]:
+        for a in ACTIONS:
+            if a.group == g:
+                out.append("- **%s**: %s" % (a.label, sig(a.title, a.params)))
+                for _t, n in a.params:
                     out.append("  - %s: %s" % (_t, n))
         out.append("")
     out += ["## Conditions", ""]
     for c in CONDITIONS:
-        out.append("- **%s**%s" % (sig(c[1], c[2]), " (trigger)" if c[3] else ""))
+        out.append("- **%s**%s: %s" % (c.label, " (trigger)" if c.trigger else "", sig(c.title, c.params)))
     out += ["", "## Expressions", ""]
     for e in EXPRESSIONS:
-        ps = ", ".join(n.split(" (")[0] for _t, n in e[3])
-        out.append("- `%s%s)` returns %s" % (e[1], ps, e[2]))
+        ps = ", ".join(n.split(" (")[0] for _t, n in e.params)
+        out.append("- **%s**: `%s%s)` returns %s" % (e.label, e.title, ps, e.ret))
     out += ["", "## Editor properties", ""]
     for _k, title, info, default, items in PROPERTIES:
         out.append("- **%s**: %s (default: %s)" % (title, info, items[default] if items else default))
@@ -339,7 +349,7 @@ FAKE_LANG = {
     "Conditions": [{"Title": "c", "Triggered": False, "Parameters": []}],
     "Expressions": [{"Title": "e(", "Returns": "Integer", "Parameters": []}],
     "Properties": [{"Type": "Checkbox", "Title": "t", "DefaultState": False},
-                   {"Type": "Combo Box", "Title": "c", "Items": ["a"], "DefaultState": 0}],
+                   {"Type": "Editbox String", "Title": "s", "DefaultState": "x"}],
 }
 FAKE_TEMPLATE = {"Identifier": "EXMP", "Dependencies": [""], "UK English": FAKE_LANG, "French": FAKE_LANG}
 
@@ -347,22 +357,25 @@ FAKE_TEMPLATE = {"Identifier": "EXMP", "Dependencies": [""], "UK English": FAKE_
 def selfcheck(root):
     errs = []
     for kind, lst in (("action", ACTIONS), ("condition", CONDITIONS), ("expression", EXPRESSIONS)):
-        names = [e[0] for e in lst]
+        names = [e.fn for e in lst]
         if len(set(names)) != len(names):
             errs.append("duplicate %s function names" % kind)
-    for i, a in enumerate(ACTIONS):                       # titles reference only existing parameters
-        used = {int(x) for x in re.findall(r"%(\d+)", a[1])}
-        if not used <= set(range(len(a[2]))):
-            errs.append("action %d title references a missing parameter" % i)
-    for i, c in enumerate(CONDITIONS):
-        used = {int(x) for x in re.findall(r"%(\d+)", c[1])}
-        if not used <= set(range(len(c[2]))):
-            errs.append("condition %d title references a missing parameter" % i)
-    for i, e in enumerate(EXPRESSIONS):
-        if not e[1].endswith("("):
-            errs.append("expression %s title must end with '('" % e[0])
-        if e[2] == T and not e[1].endswith("$("):
-            errs.append("text expression %s should end with '$('" % e[0])
+        labels = [e.label for e in lst]
+        if len(set(labels)) != len(labels):
+            errs.append("duplicate %s menu labels" % kind)
+    for kind, lst in (("action", ACTIONS), ("condition", CONDITIONS)):
+        for i, e in enumerate(lst):                       # titles reference exactly the existing parameters
+            used = {int(x) for x in re.findall(r"%(\d+)", e.title)}
+            if used != set(range(len(e.params))):
+                errs.append("%s %d (%s): title uses parameters %s but there are %d" % (kind, i, e.fn, sorted(used), len(e.params)))
+    for c in CONDITIONS:
+        if not c.title.startswith("%o"):
+            errs.append("condition %s title should start with '%%o : '" % c.fn)
+    for e in EXPRESSIONS:
+        if not e.title.endswith("("):
+            errs.append("expression %s title must end with '('" % e.fn)
+        if e.ret == T and not e.title.endswith("$("):
+            errs.append("text expression %s should end with '$('" % e.fn)
     sample = '{ // c\n\t"a": "x // not a comment, ]",\n\t/* block */ "b": [1, 2,],\n}\n'
     if load_jsonc(sample) != {"a": "x // not a comment, ]", "b": [1, 2]}:
         errs.append("load_jsonc does not handle comments / trailing commas correctly")
@@ -376,23 +389,25 @@ def selfcheck(root):
         ids = [item[0] for grp in j[key] for item in grp[1:]]
         if sorted(ids) != list(range(len(lst))):
             errs.append("%s must list every ID exactly once" % key)
+        for grp in j[key]:                                # menu labels are plain words, never %0 placeholders
+            for item in grp[1:]:
+                if "%" in item[1]:
+                    errs.append("%s label '%s' contains a placeholder" % (key, item[1]))
     # C++ definitions must match the spec's signatures
     cpp = open(os.path.join(root, "extension", "LumenExt.cpp"), encoding="utf-8").read()
     defs = {}
     for m in re.finditer(r"^[\w\s\*:]+?\bExtension::(\w+)\s*\(([^)]*)\)\s*\{", cpp, re.M):
         args = [a.strip() for a in m.group(2).split(",") if a.strip() and a.strip() != "void"]
-        defs[m.group(1)] = [re.sub(r"\s*\bp?\w+$", "", a).replace(" ", "") if a.count(" ") else a for a in args]
-    norm = {I: "int", F: "float", T: "constTCHAR*"}
+        defs[m.group(1)] = [re.sub(r"\s*\b\w+$", "", a).replace(" ", "") if a.count(" ") else a for a in args]
+    norm = {I: "int", F: "float", T: "constTCHAR*", O: "RunObject*"}
     for lst in (ACTIONS, CONDITIONS, EXPRESSIONS):
         for e in lst:
-            fn = e[0]
-            params = e[2] if lst is not EXPRESSIONS else e[3]
-            if fn not in defs:
-                errs.append("no definition of Extension::%s in LumenExt.cpp" % fn); continue
-            want = [norm[t] for t, _n in params]
-            got = [g.replace("constTCHAR*", "constTCHAR*") for g in defs[fn]]
+            if e.fn not in defs:
+                errs.append("no definition of Extension::%s in LumenExt.cpp" % e.fn); continue
+            want = [norm[t] for t, _n in e.params]
+            got = defs[e.fn]
             if len(got) != len(want) or any(g != w for g, w in zip(got, want)):
-                errs.append("signature mismatch for %s: spec %s, cpp %s" % (fn, want, got))
+                errs.append("signature mismatch for %s: spec %s, cpp %s" % (e.fn, want, got))
     if errs:
         print("SELFCHECK FAILED"); [print(" -", e) for e in errs]; return 1
     print("selfcheck ok: %d actions, %d conditions, %d expressions" % (len(ACTIONS), len(CONDITIONS), len(EXPRESSIONS)))

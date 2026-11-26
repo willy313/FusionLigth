@@ -89,7 +89,7 @@ def run(variant):
     put(t + "/Android/readme.txt", "x")
     out = os.path.join(tmp, "out")
     subprocess.check_call([sys.executable, os.path.join(REPO, "ci", "assemble.py"), "--sdk", os.path.join(tmp, "sdk"),
-                           "--repo", REPO, "--out", out, "--object-access"], stdout=subprocess.DEVNULL)
+                           "--repo", REPO, "--out", out], stdout=subprocess.DEVNULL)
     p = os.path.join(tmp, "sdk", "DarkEdif", "Lumen")
     def rd(n): return open(os.path.join(p, n), encoding="utf-8-sig").read()
     errs = []
@@ -103,6 +103,7 @@ def run(variant):
     links = re.findall(r"Link(Action|Condition|Expression)\s*\(\s*(\d+)\s*,\s*(\w+)\s*\)", cpp)
     need(len(links) == 18 + 2 + 9, "pre-build tool would find %d Link calls, expected 29" % len(links))
     need(("Action", "0", "SetAmbient") in links and ("Expression", "8", "LastError") in links, "Link calls content")
+    need("void CreateLightOnObject(int p0, RunObject* p1," in rd("Extension.hpp") or "void CreateLightOnObject(int p0, RunObject* p1" in rd("Extension.hpp"), "object parameters declared")
     need("LumenHandle()" in cpp and "if (x)" not in cpp and "ONE_SHOT" not in cpp, "handle body")
     if variant == "A":
         # every property name read in the assembled constructor must exist in the generated DarkExt.json
@@ -123,12 +124,18 @@ def run(variant):
     need("WindowsXPCompatibility = false" in open(os.path.join(tmp, "sdk", "FusionSDKConfig.ini")).read(), "ini in SDK root")
     need(not os.path.exists(os.path.join(p, "DarkExt.PostMinify.json")), "stale PostMinify removed")
     need(os.path.exists(os.path.join(p, "Lumen.Windows.vcxproj")) and os.path.exists(os.path.join(p, "Lumen.Shared.vcxitems")), "renamed files")
-    need("FUSION_INTERNAL_ACCESS;DARKEDIF_LOG_MIN_LEVEL=6;LUMEN_OBJECT_ACCESS;" in rd("Lumen.Windows.vcxproj"), "defines")
+    need("FUSION_INTERNAL_ACCESS;DARKEDIF_LOG_MIN_LEVEL=6;" in rd("Lumen.Windows.vcxproj"), "defines")
     need("lumen.cpp" in rd("Lumen.Shared.vcxitems") and "LumenExt.cpp" in rd("Lumen.Shared.vcxitems"), "sources")
     j = json.loads(rd("DarkExt.json"))
     lang = j["UK English"]
     ak, ck = ("about", "actions") if variant == "B" else ("About", "Actions")
     need(j["Identifier"] == "LUMN" and "French" not in j and len(lang[ck]) == 18 and lang[ak]["Name"] == "Lumen", "json")
+    am = lang.get("ActionMenu") or lang.get("actionmenu")
+    labels = [i[1] for g in am for i in g[1:]]
+    need("Create light on object" in labels and not any("%" in l for l in labels), "friendly menu labels: %s" % labels)
+    acts = lang.get("Actions") or lang.get("actions")
+    obj = [x for x in acts if x["Title"].startswith("Create light %0 on %1")]
+    need(len(obj) == 1 and obj[0]["Parameters"][1][0] == "Object", "object parameter in JSON")
     props = [x["Title"] for x in (lang.get("Properties") or lang.get("properties"))]
     need(props == ["Backdrop obstacles", "Pixel size"], "properties %s" % props)
     for n in ("lumen.hpp", "lumen.cpp", "LumenState.hpp", "LumenExt.cpp", "LumenMembers.inc", "LumenCtor.inc"):

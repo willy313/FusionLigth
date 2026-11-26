@@ -1,100 +1,99 @@
 # Lumen API reference
 
 Generated from `extension/gen_ext_json.py`. IDs are list positions and never change once released.
+Object parameters make Fusion run the action once for every selected instance of the chosen object.
 
 ## Actions
 
-### Ambient
-- **Set ambient light to <Level>**
-  - Float: Level (0 = pitch black, 1 = fully lit)
+### Ambient light
+- **Set ambient light level**: Set ambient light level to <Ambient level> (0 = pitch black, 1 = fully lit)
+  - Float: Ambient level (0 to 1)
 
 ### Lights
-- **Create or update light <Light ID> at (<X>, <Y>), radius <Radius>, brightness <Brightness>, on layer <Collision layer>**
-  - Integer: Light ID (-1 = assign automatically)
-  - Float: X (frame pixels)
-  - Float: Y (frame pixels)
-  - Float: Radius (pixels)
-  - Float: Brightness (0-1)
-  - Integer: Collision layer (1-based Fusion layer)
-- **Delete light <Light ID>**
+- **Create or update light**: Create light <Light ID> at X=<X position>, Y=<Y position> (radius <Radius in pixels>, brightness <Brightness>, shadow layer <Shadow layer>)
+  - Integer: Light ID (-1 = pick one automatically)
+  - Float: X position
+  - Float: Y position
+  - Float: Radius in pixels
+  - Float: Brightness (0 to 1)
+  - Integer: Shadow layer (Fusion layer number)
+- **Delete light**: Delete light <Light ID>
   - Integer: Light ID
-- **Delete all lights**
-- **Move light <Light ID> to (<X>, <Y>)**
+- **Delete all lights**: Delete all lights
+- **Move light**: Move light <Light ID> to X=<X position>, Y=<Y position>
   - Integer: Light ID
-  - Float: X
-  - Float: Y
-- **Set light <Light ID> radius to <Radius>**
+  - Float: X position
+  - Float: Y position
+- **Set light radius**: Set radius of light <Light ID> to <Radius in pixels> pixels
   - Integer: Light ID
-  - Float: Radius (pixels)
-- **Set light <Light ID> brightness to <Brightness>**
+  - Float: Radius in pixels
+- **Set light brightness**: Set brightness of light <Light ID> to <Brightness>
   - Integer: Light ID
-  - Float: Brightness (0-1)
-- **Set light <Light ID> falloff exponent to <Exponent> (1 = linear, 2 = soft)**
+  - Float: Brightness (0 to 1)
+- **Set light falloff**: Set falloff of light <Light ID> to <Falloff> (1 = linear, 2 = smooth, higher = tighter)
   - Integer: Light ID
-  - Float: Exponent
-- **Set light <Light ID> on/off: <On> (1 = on, 0 = off)**
+  - Float: Falloff
+- **Turn light on or off**: Turn light <Light ID> on or off: <On> (1 = on, 0 = off)
   - Integer: Light ID
-  - Integer: On (1) / Off (0)
+  - Integer: On (1) or off (0)
 
 ### Objects
-- **Attach light <Light ID> to object <Object> (offset <Offset X>, <Offset Y>; delete with object: <Delete light when object is destroyed>)**
-  - Integer: Light ID
-  - Integer: Object (use Fixed("object"))
+- **Create light on object**: Create light <Light ID> on <Object to attach the light to> (radius <Radius in pixels>, brightness <Brightness>, shadow layer <Shadow layer>, offset X=<Offset X>, Y=<Offset Y>)
+  - Integer: Light ID (-1 = pick one automatically)
+  - Object: Object to attach the light to
+  - Float: Radius in pixels
+  - Float: Brightness (0 to 1)
+  - Integer: Shadow layer (Fusion layer number)
   - Float: Offset X
   - Float: Offset Y
-  - Integer: Delete light when object is destroyed (1/0)
-- **Detach light <Light ID> from its object**
+- **Attach existing light to object**: Attach light <Light ID> to <Object to follow> (offset X=<Offset X>, Y=<Offset Y>)
   - Integer: Light ID
-- **Create light <Light ID> on object <Object> (radius <Radius>, brightness <Brightness>, layer <Collision layer>, offset <Offset X>, <Offset Y>)**
-  - Integer: Light ID (-1 = assign automatically)
-  - Integer: Object (use Fixed("object"))
-  - Float: Radius (pixels)
-  - Float: Brightness (0-1)
-  - Integer: Collision layer (1-based Fusion layer)
+  - Object: Object to follow
   - Float: Offset X
   - Float: Offset Y
+- **Detach light from object**: Detach light <Light ID> from its object
+  - Integer: Light ID
 
 ### Shadows
-- **Add obstacle on layer <Layer> at (<X>, <Y>) size <Width> x <Height>**
-  - Integer: Layer
-  - Integer: X
-  - Integer: Y
+- **Add obstacle rectangle**: Add obstacle on shadow layer <Shadow layer> at X=<X position>, Y=<Y position>, size <Width> x <Height>
+  - Integer: Shadow layer (Fusion layer number)
+  - Integer: X position
+  - Integer: Y position
   - Integer: Width
   - Integer: Height
-- **Clear all obstacles on layer <Layer>**
-  - Integer: Layer
-- **Make object <Object> cast shadows on layer <Layer>**
-  - Integer: Object (use Fixed("object"))
-  - Integer: Layer
-- **Stop object <Object> casting shadows**
-  - Integer: Object (use Fixed("object"))
+- **Clear obstacles on a layer**: Clear all obstacle rectangles on shadow layer <Shadow layer>
+  - Integer: Shadow layer (Fusion layer number)
+- **Make object cast shadows**: Make <Object that casts shadows> cast shadows on shadow layer <Shadow layer>
+  - Object: Object that casts shadows
+  - Integer: Shadow layer (Fusion layer number)
+- **Stop object casting shadows**: Stop <Object> casting shadows
+  - Object: Object
 
-### Quality
-- **Set lightmap pixel size to <Pixel size> x <Pixel size> screen pixels (1 = sharpest, 4 = fast)**
-  - Integer: Pixel size (1-16)
-- **Debug: set shade levels to <Shade levels>, invert blend: <Invert blend coefficient>, copy alpha: <Copy alpha blit flag>**
-  - Integer: Shade levels (2-64)
-  - Integer: Invert blend coefficient (1/0)
-  - Integer: Copy alpha blit flag (1/0)
+### Settings
+- **Set lightmap pixel size**: Set lightmap pixel size to <Pixel size> (1 = sharpest, 4 = fastest)
+  - Integer: Pixel size (1 to 16)
+- **Debug: render options**: Debug: smooth edges <Smooth edges> (1/0), copy-alpha blit flag <Copy-alpha blit flag> (1/0)
+  - Integer: Smooth edges (1/0)
+  - Integer: Copy-alpha blit flag (1/0)
 
 ## Conditions
 
-- **On light created** (trigger)
-- **Light <Light ID> exists**
+- **On light created** (trigger): %o : On light created
+- **Light exists**: %o : Light <Light ID> exists
 
 ## Expressions
 
-- `LightCount()` returns Integer
-- `LastLightID()` returns Integer
-- `LightX(Light ID)` returns Float
-- `LightY(Light ID)` returns Float
-- `LightRadius(Light ID)` returns Float
-- `LightBrightness(Light ID)` returns Float
-- `Ambient()` returns Float
-- `DebugInfo$()` returns Text
-- `LastError$()` returns Text
+- **Number of lights**: `NumberOfLights()` returns Integer
+- **ID of the last created light**: `LastCreatedLightID()` returns Integer
+- **Light X position**: `LightX(Light ID)` returns Float
+- **Light Y position**: `LightY(Light ID)` returns Float
+- **Light radius**: `LightRadius(Light ID)` returns Float
+- **Light brightness**: `LightBrightness(Light ID)` returns Float
+- **Ambient light level**: `AmbientLevel()` returns Float
+- **Debug information**: `DebugInfo$()` returns Text
+- **Last error message**: `LastError$()` returns Text
 
 ## Editor properties
 
-- **Backdrop obstacles**: Backdrop objects with an obstacle type cast shadows (reserved; imported in a later version) (default: True)
+- **Backdrop obstacles**: Reserved for a later version: backdrops cannot cast shadows yet. Use Add obstacle rectangle or Make object cast shadows (default: True)
 - **Pixel size**: Lightmap pixel size in screen pixels (1-8). 1 is sharpest and slowest, 4 is a good fast setting (default: 2)

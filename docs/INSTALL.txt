@@ -7,29 +7,44 @@ Close Fusion first. Then copy the two files, keeping their folder names:
   Data\Runtime\Unicode\Lumen.mfx      ->  <Fusion folder>\Data\Runtime\Unicode\
 
 (<Fusion folder> is usually C:\Program Files (x86)\Clickteam Fusion 2.5 or the Steam equivalent.)
-Windows may ask for administrator rights. If files come out of a downloaded zip, right-click each
+Windows may ask for administrator rights. If the files come from a downloaded zip, right-click each
 one, Properties, tick Unblock.
 
 Start Fusion: "Lumen" appears in the Insert Object dialog.
 
+How it works in one minute
+--------------------------
+* Put ONE Lumen object in the frame, on a layer ABOVE what you want darkened. It sizes itself to the
+  window and follows the camera; its editor size does not matter. Objects on layers above it stay bright (HUD).
+* Everything is dark until you add light: "Set ambient light level" raises the base brightness.
+* Lights are made with "Create or update light". Give each light an ID (or -1 to get one automatically
+  and read it with LastCreatedLightID). Creating a light with an existing ID updates it.
+* Shadows: a light is only blocked by obstacles on its own "shadow layer" (a Fusion layer number).
+    - "Make object cast shadows": choose any object (active objects, quick backdrops that appear in the
+      event editor). Fusion runs the action once for every instance. It follows the object when it moves.
+    - "Add obstacle rectangle": a fixed rectangle in frame pixels. Use this for true backdrop objects, which
+      Lumen cannot read yet.
+* "Create light on object" makes a light that follows an object and disappears with it. It runs once for every
+  instance of the object you pick, so give it -1 as the light ID.
+
 First test (about two minutes)
 ------------------------------
 1. Set Display mode to Direct3D 11 (Application properties, Runtime options).
-2. Insert a Lumen object anywhere in the frame (its editor size does not matter: at run time it sizes
-   itself to the window and follows it). Place it on a layer ABOVE the objects you want darkened.
+2. Insert a Lumen object. Insert two active objects (for example squares) as walls.
 3. Events:
-     Start of frame:  Lumen: Set ambient light to 0
-                      Lumen: Create or update light 1 at (320, 240), radius 200, brightness 1, on layer 1
-     Always:          Lumen: Set light 1 position to (XMouse, YMouse)
-4. Run. Expect darkness with a soft circle of light following the mouse.
+     Start of frame:  Lumen: Set ambient light level to 0
+                      Lumen: Make <your wall object> cast shadows on shadow layer 1
+                      Lumen: Create or update light 1 at X=320, Y=240 (radius 250, brightness 1, shadow layer 1)
+     Always:          Lumen: Move light 1 to X=XMouse, Y=YMouse
+4. Run. Expect darkness with a smooth circle of light following the mouse, and a shadow behind each wall.
 
 What to report back
 -------------------
  * It works / it crashes / it is not visible. For a crash, the exact text of the error box.
- * The text of  Lumen.DebugInfo$(  shown in a String object (it lists timings and counts).
- * Try the "Pixel size" property (1, 2, 4) and the action "Set lightmap pixel size". Say which work.
-   1 draws without stretching; 2 and above stretch a small image over the window, which is the part
-   that is not yet confirmed.
- * If the light looks inverted (dark circle on bright ground) or the gradient looks wrong, run
-   "Debug: set shade levels to 16, invert blend: 1" and say whether that fixes it.
+ * The text of  Lumen.DebugInfo$(  shown in a String object (timings and counts).
+ * Does the shadow appear behind the walls? Is the edge of the light smooth or blocky?
+ * Try the "Pixel size" property (1, 2, 4) or the action "Set lightmap pixel size". 1 is sharpest; larger values
+   are faster and are smoothed when stretched.
+ * If the picture looks wrong (no darkness, or a tint), run "Debug: render options" with smooth edges 0 and
+   copy-alpha 0, then 1 and 0, then 1 and 1, and say which combination looks right.
  * Frame rate with 1 light and with 50 lights.

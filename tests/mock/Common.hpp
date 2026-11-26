@@ -15,10 +15,13 @@ struct RECT { long left, top, right, bottom; };
 
 struct HeaderObject {
 	int x = 0, y = 0; RECT hoRect{ 0, 0, 0, 0 }; int sizeW = 0, sizeH = 0, setSizeCalls = 0;
-	int get_X() { return x; } int get_Y() { return y; }
+	int imgW = 0, imgH = 0, spotX = 0, spotY = 0;
+	int get_X() const { return x; } int get_Y() const { return y; }
+	int get_ImgWidth() const { return imgW; } int get_ImgHeight() const { return imgH; }
+	int get_ImgXSpot() const { return spotX; } int get_ImgYSpot() const { return spotY; }
 	void SetSize(int w, int h) { sizeW = w; sizeH = h; ++setSizeCalls; }
 };
-struct RunObject { HeaderObject ho; HeaderObject* get_rHo() { return &ho; } };
+struct RunObject { HeaderObject ho; int fixed = 0; HeaderObject* get_rHo() { return &ho; } };
 struct RunObjectMultiPlatPtr { RunObject* ro; RunObject* operator->() { return ro; } };   // real one is used as rdPtr->get_rHo()
 struct FrameHdr { int Width = 2000, Height = 1500; };
 struct Frame { FrameHdr hdr; };
@@ -50,22 +53,30 @@ struct Rect {
 constexpr inline std::uint32_t ColorRGB(std::uint8_t r, std::uint8_t g, std::uint8_t b) { return 0xFF000000u | (b << 16) | (g << 8) | r; }
 struct SurfaceFill { std::uint32_t c; static SurfaceFill Solid(std::uint32_t c) { return { c }; } };
 enum class BlitOptions { None = 0, AntiAliasing = 1, CopyAlpha = 2 };
+inline BlitOptions operator|(BlitOptions a, BlitOptions b) { return (BlitOptions)((int)a | (int)b); }
 enum class BlitOperation { Copy, Blend };
 
 struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; BlitOptions flags; };
 extern std::vector<Blit> g_blits;
-extern bool g_lastSetPixelIncludedAlpha;
+extern int g_alphaWriteOnOpaqueSurface;
+struct Surface;
+extern const Surface* g_lastBlitSource;
 struct Surface {
-	std::size_t w, h; long pixelsSet = 0;
-	Surface(RunHeader*, bool, bool, std::size_t w_, std::size_t h_, bool) : w(w_), h(h_) {}
+	std::size_t w, h; bool hasAlpha; long pixelsSet = 0; std::vector<std::uint32_t> pix;
+	Surface(RunHeader*, bool, bool, std::size_t w_, std::size_t h_, bool alpha) : w(w_), h(h_), hasAlpha(alpha), pix(w_ * h_, 0) {}
 	Surface(const Surface&) = delete;
 	Surface(Surface&&) = delete;
 	bool FillImageWith(const SurfaceFill&) { return true; }
 	bool SetTransparencyToColor(std::uint32_t) { return true; }
-	void SetPixel(Point, std::uint32_t, bool includeAlpha = true) { ++pixelsSet; if (includeAlpha) g_lastSetPixelIncludedAlpha = true; }
+	void SetPixel(Point p, std::uint32_t c, bool includeAlpha = true) {
+		++pixelsSet;
+		if (includeAlpha && !hasAlpha) ++g_alphaWriteOnOpaqueSurface;
+		if (p.x >= 0 && p.y >= 0 && (std::size_t)p.x < w && (std::size_t)p.y < h) pix[(std::size_t)p.y * w + p.x] = c;
+	}
 	bool CopySection(Rect s, Surface&, Rect d, bool = true, BlitOptions f = BlitOptions::CopyAlpha,
 		BlitOperation op = BlitOperation::Copy, std::uint8_t coef = 0) const {
 		g_blits.push_back({ s.right - s.left, s.bottom - s.top, d.left, d.top, d.right, d.bottom, op, coef, f });
+		g_lastBlitSource = this;
 		return true;
 	}
 	static Surface& CreateFromMainWindow(RunHeader*) { static Surface s(nullptr, false, false, 640, 480, false); return s; }
@@ -79,6 +90,7 @@ struct Runtime {
 	void GenerateEvent(int) { ++events; }
 	void SetPosition(int x, int y) { posX = x; posY = y; ++posCalls; }
 	RunObject* RunObjPtrFromFixed(int f) { auto it = objects.find(f); return it == objects.end() ? nullptr : it->second; }
+	int FixedFromRunObjPtr(RunObject* o) { return o ? o->fixed : 0; }
 };
 }
 

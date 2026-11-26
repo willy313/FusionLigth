@@ -6,15 +6,15 @@ obstacles on that layer block it.
 
 ## How it works
 
-Lights are rasterised on the CPU into a small **lightmap** (1, 1/2, 1/4 or 1/8 of window resolution), then the
-result is drawn over the window in a few GPU blits. DarkEdif's Surface API has no way to draw into a GPU texture or to
+Lights are rasterised on the CPU into a small **lightmap** (1, 1/2, 1/4 or 1/8 of window resolution) stored as a
+single black surface with per-pixel alpha, which is drawn over the window in one GPU blit with smoothed stretching. DarkEdif's Surface API has no way to draw into a GPU texture or to
 run shaders, so this is the efficient design it allows. Cost control:
 
 * lights outside the window are skipped; each light's lightmap is cached and only rebuilt if it or an obstacle in
   its range changed; scrolling reuses the caches (the lightmap is aligned to the world, not the screen)
 * shadows come from angular ray casting over a coarse obstacle grid, so cost does not grow with obstacle count
 
-Benchmark (core only, 1280x720, quality 1/4, 100 lights of radius 200, 300 obstacles): full rebuild about 35 ms,
+Benchmark (core only, 1280x720, pixel size 4, 100 lights of radius 200, 300 obstacles): full rebuild about 35 ms,
 one moving light about 0.8 ms per frame, scrolling about 0.5 ms per frame.
 
 ## Repository layout
@@ -43,35 +43,30 @@ one moving light about 0.8 ms per frame, scrolling about 0.5 ms per frame.
 
 ## What is verified and what is not
 
-Verified here: the core (108 checks), the extension logic against a mock of the DarkEdif API (72 checks, 74 with
-object access), that the generated declarations match the C++ signatures, and the assembly script's mechanics against
-a mock template.
+Verified here: the core (108 checks), the extension layer against a mock that enforces the real SDK's rules for
+`Point`, `Rect`, `SetPixel` and `CopySection` (48 checks), that the generated declarations match the C++ signatures,
+and the assembly script against the real template's `Extension.hpp/.cpp`, `Edittime.cpp` and `DarkExt.json`.
+Verified by a real CI build and a first run in Fusion: assembly, compile, link, `DarkEdifPreBuildTool`, loading in Fusion.
 
-**Not verified, because neither the SDK nor Fusion could be reached from where this was written.** Expect the first
-CI run or the first test in Fusion to need a round of fixes:
+Checked against the SDK headers (written from the real declarations, not run in Fusion yet): per-pixel-alpha
+rendering (`Surface(..., alpha = true)`, `SetPixel` with alpha, `CopySection` with `BlitOptions::AntiAliasing`),
+`Runtime.RunObjPtrFromFixed` / `FixedFromRunObjPtr`, `HeaderObject::get_X/get_Y/get_ImgWidth/...`, and Object action
+parameters (`Params::Object`, delivered as `RunObject*`, once per selected instance).
 
-1. `ci/assemble.py` is now tested against the real template's `Extension.hpp/.cpp` and `DarkExt.json`
-   (`tests/fixtures/template`). `Edittime.cpp`, the `.vcxproj` and `.vcxitems` are still only mocked.
-2. `DarkExt.json`: written in the template's multi-language layout from its own example entries; it has not been through
-   the SDK's pre-build tool in a build that completed.
-3. Surface calls: the constructor argument list, `SetPixel` parameter order, passing brace-initialised rectangles and a
-   `Surface&` destination to `CopySection`, **stretching** a small surface onto a larger rectangle, the **direction of the
-   Blend coefficient** (the `invert` debug option exists for this), and whether `CreateFromMainWindow` returns something
-   the caller must free.
-4. Manual display. The object sizes itself to the window in the constructor (without a size Fusion never calls
-   `Display()`, per your notes) and is moved to the window origin as the camera moves. `Edittime.cpp` is only patched
-   to remove the template's `#error`; the editor shows Fusion's default icon.
-5. Property API: `IsPropChecked` and `GetPropertyStr` as in your notes; the property schema comes from the template.
-6. Object access (`LUMEN_OBJECT_ACCESS`): `RunObjPtrFromFixed`, `get_X`/`get_Y` and `hoRect` are written from memory.
-   It is off by default and enabled with the workflow option once the basic build is green.
-7. Scroll actions apply at the end of the tick, so lights may lag one tick behind a scroll.
+Not verified:
+
+1. Whether stretching a small alpha surface over the window works on the Direct3D frame (pixel size 2 and above).
+2. Whether `DarkExt.json` accepts the parameter type spelled `"Object"` (the SDK's pre-build tool will say).
+3. Backdrop objects cannot cast shadows. Reading them means following the runtime's object-info and image-bank
+   structures, which the SDK headers do not make safe; use `Add obstacle rectangle` for those, or any object that
+   appears in the event editor with `Make object cast shadows`. The `Backdrop obstacles` property is reserved.
+4. Scroll actions apply at the end of the tick, so a light may lag one tick behind a scroll.
 
 ## Stages
 
-1. **Now:** overlay, ambient, lights, obstacle rectangles, quality and render debug options. Objects: off.
-2. Object access: attach lights to objects, object shadow casters. Then backdrop obstacle import (needs the real SDK
-   headers); the `Backdrop obstacles` property is reserved for it.
-3. Performance pass from real numbers (`DebugInfo$(`), then colour and spot lights if wanted.
+1. **Done:** overlay, ambient, lights, obstacle rectangles, object-attached lights, object shadow casters.
+2. Backdrop import, if a safe way is found. Performance pass from real numbers (`DebugInfo$(`). Coloured and spot
+   lights if wanted.
 
 Editor properties (`Backdrop obstacles`, `Pixel size`) are fixed now: adding one after release breaks existing objects.
 Identifier `LUMN` and all action, condition and expression IDs are stable from the first release; only append.

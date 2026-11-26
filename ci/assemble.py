@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble the Lumen DarkEdif project from the SDK's template.
 
-  assemble.py --sdk <MMF2Exts checkout> --repo <this repo> --out <artifact dir> [--object-access]
+  assemble.py --sdk <MMF2Exts checkout> --repo <this repo> --out <artifact dir>
 
 What it does (every step prints what it changed; anything it cannot find is a hard error with context):
   1. copies  DarkEdif/DarkEdif Template  ->  DarkEdif/Lumen  and renames every 'DarkEdif Template'
@@ -68,7 +68,6 @@ def main():
     ap.add_argument("--sdk", required=True)
     ap.add_argument("--repo", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--object-access", action="store_true")
     a = ap.parse_args()
 
     de = os.path.join(a.sdk, "DarkEdif")
@@ -257,7 +256,7 @@ def main():
     if not win:
         die("no .vcxproj found in the assembled project")
     vproj = sorted(win, key=len)[0]
-    defs = "FUSION_INTERNAL_ACCESS;DARKEDIF_LOG_MIN_LEVEL=6;" + ("LUMEN_OBJECT_ACCESS;" if a.object_access else "")
+    defs = "FUSION_INTERNAL_ACCESS;DARKEDIF_LOG_MIN_LEVEL=6;"
     block = ("\n  <ItemDefinitionGroup><ClCompile><PreprocessorDefinitions>%s%%(PreprocessorDefinitions)"
              "</PreprocessorDefinitions></ClCompile></ItemDefinitionGroup>" % defs)
     t = read(vproj)
