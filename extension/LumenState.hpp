@@ -23,6 +23,7 @@ struct LumenState {
 	int strategy = -1;               // how darkness reaches the screen; -1 = not chosen yet (see LumenExt.cpp)
 	int forcedStrategy = -1;         // set by the debug action; -1 = automatic
 	bool strategyConfirmed = false;  // the first complete draw with this strategy has finished
+	int levels = 16;                 // rectangles method: number of darkness steps (fewer = fewer blits)
 	int runCount = 0;                // rectangles strategy: number of blits per draw
 	int lastLightId = 0, nextAutoId = 1;
 	std::string lastError;

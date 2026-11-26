@@ -35,6 +35,7 @@ int main() {
 	RunObject self; HeaderObject& ho = self.ho;
 	Extension e(&rh, &self, &ed);
 
+	e.SetRenderOptions(1, 0, 0, 0, 16);                        // this flow checks the alpha-lock method; auto-selection is tested below
 	// constructed from properties: "Pixel size" = 2
 	CHECK(e.lx && e.lx->engine.settings().divisor == 2 && e.lx->winW == 640);
 	// manual display: the object is sized to the window (not the editor size) so Fusion calls Display()
@@ -61,11 +62,7 @@ int main() {
 	CHECK(b0.flags == BlitOptions::AntiAliasing);
 	CHECK(b0.srcW == e.lx->engine.mapWidth() && b0.srcH == e.lx->engine.mapHeight());
 	CHECK(b0.dr - b0.dl == e.lx->engine.blitWidth() && b0.db - b0.dt == e.lx->engine.blitHeight());
-	CHECK(e.lx->strategy == 0 && e.lx->strategyConfirmed);     // fresh state: first method (alpha lock) is chosen and confirmed
-	{
-		const std::string st = slurp(dir1 + "/Lumen-method.txt");
-		CHECK(st.rfind("build ", 0) == 0 && st.find("tried 0\n") != std::string::npos && st.find("ok 0\n") != std::string::npos);
-	}
+	CHECK(e.lx->strategy == 0 && e.lx->strategyConfirmed);     // forced methods are not written to the method file
 	const DarkEdif::Surface* mask = DarkEdif::g_lastBlitSource;
 	CHECK(mask && mask->hasAlpha && mask->w == (size_t)e.lx->engine.mapWidth());
 	CHECK(!mask->transparencyFromAlpha && mask->setAlphaCalls == 0);   // neither SetTransparencyToAlpha nor SetAlpha (SetAlpha crashed)
@@ -113,9 +110,9 @@ int main() {
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
 
 	// render options + quality + errors
-	e.SetRenderOptions(0, 1, 0, 0); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(0, 1, 0, 0, 16); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits.size() == 1 && g_blits[0].flags == BlitOptions::CopyAlpha);
-	e.SetRenderOptions(1, 0, -1, 0); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(1, 0, 0, 0, 16); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits[0].flags == BlitOptions::AntiAliasing);
 	e.SetQuality(4); CHECK(e.LumenHandle() == REFLAG::DISPLAY && e.lx->engine.settings().divisor == 4);
 	e.LumenDisplay();
@@ -161,7 +158,7 @@ int main() {
 	// ---- method 1: grey pixels of the alpha surface
 	{
 		e.CreateLight(30, 200, 150, 100, 1.0f, 1); e.LumenHandle();
-		e.SetRenderOptions(1, 0, 1, 0); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		e.SetRenderOptions(1, 0, 1, 0, 16); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
 		const DarkEdif::Surface* m = DarkEdif::g_lastBlitSource;
 		CHECK(g_blits.size() == 1 && g_blits[0].op == BlitOperation::Copy && m->alphaView);
 		const int gx = 200 / 2 - e.lx->engine.originPxX() / 2, gy = 150 / 2 - e.lx->engine.originPxY() / 2;
@@ -169,8 +166,8 @@ int main() {
 		CHECK(e.lx->strategy == 1 && e.lx->strategyConfirmed);
 	}
 	// ---- method 2: rectangles, each lit cell covered exactly once, coefficient follows Fusion's convention
-	for (int invert = 0; invert < 2; ++invert) {
-		e.SetRenderOptions(1, 0, 2, invert); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+	for (int levels : { 16, 32 }) for (int invert = 0; invert < 2; ++invert) {
+		e.SetRenderOptions(1, 0, 2, invert, levels); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
 		CHECK(!g_blits.empty() && (int)g_blits.size() == e.lx->runCount);
 		const int d = e.lx->engine.settings().divisor, mw = e.lx->engine.mapWidth(), mh = e.lx->engine.mapHeight();
 		const int ox = e.lx->engine.originPxX() - rh.get_WindowX(), oy = e.lx->engine.originPxY() - rh.get_WindowY();
@@ -178,7 +175,7 @@ int main() {
 		bool shape = true;
 		for (auto& b : g_blits) {
 			if (b.op != BlitOperation::Blend || b.srcW != 1 || b.srcH != 1 || b.flags != BlitOptions::None) shape = false;
-			const int q = (int)std::lround(32.0 * (invert ? (b.coef / 128.0) : (1.0 - b.coef / 128.0)));
+			const int q = (int)std::lround(32.0 * (invert ? (b.coef / 128.0) : (1.0 - b.coef / 128.0)) * levels / 32.0);
 			for (int cy = (b.dt - oy) / d; cy < (b.db - oy) / d; ++cy)
 				for (int cx = (b.dl - ox) / d; cx < (b.dr - ox) / d; ++cx) { ++cover[(size_t)cy * mw + cx]; level[(size_t)cy * mw + cx] = q; }
 		}
@@ -186,16 +183,15 @@ int main() {
 		bool exact = true;
 		for (int y = 0; y < mh; ++y) for (int x = 0; x < mw; ++x) {
 			const int a = (int)(e.lx->engine.pixels()[(size_t)y * mw + x] >> 24);
-			const int q = (a * 32 + 127) / 255;
+			const int q = (a * levels + 127) / 255;
 			if (cover[(size_t)y * mw + x] != (q > 0 ? 1 : 0) || (q > 0 && level[(size_t)y * mw + x] != q)) exact = false;
 		}
 		CHECK(exact);
 	}
-	e.SetRenderOptions(1, 0, -1, 0);
+	e.SetRenderOptions(1, 0, 0, 0, 16);
 
 	// ---- self-healing method choice: a method that was tried but never confirmed (the app died) is skipped next launch
 	{
-		const std::string header = slurp(dir1 + "/Lumen-method.txt").substr(0, slurp(dir1 + "/Lumen-method.txt").find('\n') + 1);
 		auto launch = [&](const char* name, const std::string& content) {
 			const std::string d = makeDir(name);
 			std::ofstream(d + "/Lumen-method.txt") << content;
@@ -206,14 +202,18 @@ int main() {
 			const int m = x.lx->strategy;
 			return std::make_pair(m, slurp(d + "/Lumen-method.txt"));
 		};
-		CHECK(launch("lumen_t2", header + "tried 0\n").first == 1);                  // 0 crashed -> 1
-		CHECK(launch("lumen_t3", header + "tried 0\ntried 1\n").first == 2);         // 0 and 1 crashed -> rectangles
-		CHECK(launch("lumen_t4", header + "tried 0\ntried 1\ntried 2\n").first == 2); // all died: most conservative
-		CHECK(launch("lumen_t5", header + "tried 0\ntried 1\nok 1\n").first == 1);  // a confirmed method wins
-		CHECK(launch("lumen_t6", header + "tried 0\nok 2\n").first == 2);
-		CHECK(launch("lumen_t7", "build some other build\ntried 0\ntried 1\n").first == 0);   // old build's verdicts are forgotten
-		auto r = launch("lumen_t8", header + "tried 0\n");
-		CHECK(r.second.find("tried 1\n") != std::string::npos && r.second.find("ok 1\n") != std::string::npos);
+		auto first = launch("lumen_t0", "");                                           // fresh launch creates the file
+		CHECK(first.first == 2);                                                       // rectangles first
+		const std::string header = first.second.substr(0, first.second.find('\n') + 1);   // "build <id>\n"
+		CHECK(header.rfind("build ", 0) == 0 && first.second.find("tried 2\n") != std::string::npos && first.second.find("ok 2\n") != std::string::npos);
+		CHECK(launch("lumen_t2", header + "tried 2\n").first == 0);                   // rectangles died -> alpha lock
+		CHECK(launch("lumen_t3", header + "tried 2\ntried 0\n").first == 1);          // ... then alpha surface
+		CHECK(launch("lumen_t4", header + "tried 2\ntried 0\ntried 1\n").first == 2); // all died: most conservative
+		CHECK(launch("lumen_t5", header + "tried 2\ntried 0\nok 0\n").first == 0);   // a confirmed method wins
+		CHECK(launch("lumen_t6", header + "tried 2\nok 2\n").first == 2);
+		CHECK(launch("lumen_t7", "build some other build\ntried 2\ntried 0\n").first == 2);   // old build's verdicts are forgotten
+		auto r = launch("lumen_t8", header + "tried 2\n");
+		CHECK(r.second.find("tried 0\n") != std::string::npos && r.second.find("ok 0\n") != std::string::npos);
 		setenv("TMPDIR", dir1.c_str(), 1);
 	}
 	{   // breadcrumb log written for diagnosing hard crashes

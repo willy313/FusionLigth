@@ -40,21 +40,25 @@ First test (about two minutes)
 
 If the application crashes without any message
 ----------------------------------------------
-Lumen has three ways to put the darkness on the screen (0 alpha lock, 1 alpha surface, 2 rectangles). The SDK does not
-say which of them works on your machine, so Lumen finds out by itself:
+Lumen has three ways to put the darkness on the screen. The SDK does not say which of them works, so Lumen finds out:
 
-  * On the first run it tries method 0 and writes "tried 0" to  %TEMP%\Lumen-method.txt.
-  * If the application then crashes, JUST START IT AGAIN. Lumen sees "tried 0" without "ok 0", skips that method
-    and tries the next one. After at most two more starts it is on a method that does not crash.
+  method 2  rectangles     (tried FIRST) no alpha plane: runs of equal darkness drawn as stretched 1x1 black blits
+  method 0  alpha lock     writes the darkness through GetAlphaBytes()      (crashed in testing)
+  method 1  alpha surface  writes it through GetAlphaSurface()              (Fusion error "Unexpected depth 8")
+
+  * Before using a method, Lumen writes "tried N" to  %TEMP%\Lumen-method.txt.
+  * If the application then crashes, JUST START IT AGAIN. Lumen sees "tried N" without "ok N", skips that method
+    and tries the next one.
   * The first complete draw writes "ok N", and from then on that method is used every time.
-  * A new Lumen build forgets these notes and starts again at method 0.
+  * A new Lumen build forgets these notes and starts again at method 2.
 
 If it still crashes, send me  %TEMP%\Lumen-debug.log  (press Win+R, type %TEMP%\Lumen-debug.log, Enter). The LAST
 line is the step that was running. The file has at most 80 short lines and is rewritten at every start.
 To start the method search over, delete  %TEMP%\Lumen-method.txt.
 
-To try a method by hand, use the action  Debug: render options  with method 0, 1 or 2 (-1 = automatic). Say which
-methods look right: darkness with soft light circles, no tint, no blocks.
+To try a method by hand, use the action  Debug: render options  with method 0, 1 or 2 (-1 = automatic). Methods 0 and 1
+may crash. For method 2 you can lower the shade levels (default 16; fewer = fewer blits = faster, but coarser steps),
+and if the lighting looks inverted set invert blend to 1.
 
 What to report back
 -------------------
@@ -64,5 +68,5 @@ What to report back
  * Try the "Pixel size" property (1, 2, 4) or the action "Set lightmap pixel size". 1 is sharpest; larger values
    are faster and are smoothed when stretched.
  * If the picture looks wrong (all black, or a tint), try "Debug: render options" with smooth edges 1, copy-alpha 0,
-   method 0, then 1, then 2 (invert blend 0), then 2 with invert blend 1. Say which looks right.
+   method 2 with invert blend 0, then 1. Say which looks right, and what DebugInfo$( says (blits per draw, levels).
  * Frame rate with 1 light and with 50 lights.

@@ -1,5 +1,4 @@
 # Lumen: a lighting engine for Clickteam Fusion 2.5
-NOTE: This is an AI-coded extension made with claude
 
 Ambient darkness, many lights, soft falloff, shadows from obstacles. Built on DarkEdif, Windows only, Direct3D 11
 with a software fallback. The overlay object sits on a high layer; each light has a collision layer, and only
@@ -45,7 +44,7 @@ one moving light about 0.8 ms per frame, scrolling about 0.5 ms per frame.
 ## What is verified and what is not
 
 Verified here: the core (108 checks), the extension layer against a mock that enforces the real SDK's rules for
-`Point`, `Rect`, `SetPixel` and `CopySection` (557 checks), that the generated declarations match the C++ signatures,
+`Point`, `Rect`, `SetPixel` and `CopySection` (564 checks), that the generated declarations match the C++ signatures,
 and the assembly script against the real template's `Extension.hpp/.cpp`, `Edittime.cpp` and `DarkExt.json`.
 Verified by a real CI build and a first run in Fusion: assembly, compile, link, `DarkEdifPreBuildTool`, loading in Fusion.
 
@@ -66,7 +65,7 @@ Not verified:
 ## Diagnosing a crash
 
 A hard crash shows no message, so Lumen appends its first steps to `%TEMP%\Lumen-debug.log` (80 lines at most, rewritten
-at each start); the last line names the step that crashed. Lumen also has three drawing methods and remembers in
+at each start); the last line names the step that crashed. Lumen has three drawing methods (rectangles first, since both alpha-plane methods failed on the tested SDK) and remembers in
 `%TEMP%\Lumen-method.txt` which was tried and which was confirmed: a method that crashed is skipped on the next launch, so
 restarting the application a couple of times finds one that works. See `docs/INSTALL.txt`.
 

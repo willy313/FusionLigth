@@ -68,10 +68,14 @@ static int chooseMethod() {
 			if (o) o << "build " << kBuildId << "\n";
 		}
 	}
+	// Preference order: rectangles first (needs no alpha plane; both alpha methods crashed on the tested SDK build:
+	// GetAlphaBytes() faulted and GetAlphaSurface() raised "Unexpected depth 8. Cannot detect color format"), then the
+	// alpha methods, which stay available through the debug action.
+	static const int order[M_COUNT] = { M_RECTS, M_ALPHA_LOCK, M_ALPHA_SURFACE };
 	int pick = -1;
-	for (int m = 0; m < M_COUNT && pick < 0; ++m) if (ok[m]) pick = m;           // a confirmed method wins
-	for (int m = 0; m < M_COUNT && pick < 0; ++m) if (!tried[m]) pick = m;       // else the first one not tried yet
-	if (pick < 0) pick = M_RECTS;                                                 // everything died: most conservative
+	for (int i = 0; i < M_COUNT && pick < 0; ++i) if (ok[order[i]]) pick = order[i];       // a confirmed method wins
+	for (int i = 0; i < M_COUNT && pick < 0; ++i) if (!tried[order[i]]) pick = order[i];   // else the first not tried yet
+	if (pick < 0) pick = M_RECTS;                                                           // everything died: most conservative
 	crumb(std::string("method: chose ") + methodName(pick));
 	markMethod("tried", pick);
 	return pick;
@@ -84,8 +88,7 @@ static int chooseMethod() {
 //  2 rectangles     no alpha plane: runs of equal darkness are drawn as stretched 1x1 black blits with a Blend
 //                   coefficient (a 1x1 surface stretched with CopySection is confirmed to fill a rectangle on the frame)
 // SetPixel moves colour only, never alpha, and SetAlpha() crashed in testing, so neither is used.
-struct Run { int x0, x1, y0, y1, q; };   // lightmap cells [x0,x1) x [y0,y1), darkness level q (1..kLevels)
-static const int kLevels = 32;
+struct Run { int x0, x1, y0, y1, q; };   // lightmap cells [x0,x1) x [y0,y1), darkness level q (1..levels)
 
 struct LumenGfx {
 	std::unique_ptr<Surface> mask;       // methods 0 and 1
@@ -123,6 +126,7 @@ static void buildRuns(LumenState& S) {
 	LumenGfx& G = *S.gfx;
 	const std::vector<uint32_t>& px = S.engine.pixels();
 	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
+	const int kLevels = S.levels;
 	G.runs.clear();
 	std::vector<Run> open;                                   // runs extended by the previous row
 	std::map<std::array<int, 3>, size_t> openIdx;
@@ -307,7 +311,7 @@ REFLAG Extension::LumenDisplay() {
 		if (logIt) crumb("display: rectangles " + std::to_string(G.runs.size()));
 		const Rect one(0, 0, 1, 1);
 		for (const Run& r : G.runs) {
-			const double opacity = (double)r.q / kLevels;
+			const double opacity = (double)r.q / S.levels;
 			int coef = (int)std::lround((S.invertBlend ? opacity : 1.0 - opacity) * 128.0);   // Fusion's convention: 0 = opaque
 			coef = (std::max)(0, (std::min)(128, coef));
 			const Rect dst(ox + r.x0 * d, oy + r.y0 * d, ox + r.x1 * d, oy + r.y1 * d, true);
@@ -401,7 +405,8 @@ void Extension::RemoveShadowCasterObject(RunObject* p0) {
 
 void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->maskDirty = true; lx->forceRedraw = true; }
 
-void Extension::SetRenderOptions(int p0, int p1, int p2, int p3) {
+void Extension::SetRenderOptions(int p0, int p1, int p2, int p3, int p4) {
+	lx->levels = (std::max)(4, (std::min)(64, p4));
 	lx->smooth = p0 != 0;
 	lx->copyAlpha = p1 != 0;
 	lx->invertBlend = p3 != 0;
@@ -433,11 +438,11 @@ const TCHAR* Extension::DebugInfo() {
 	char b[520];
 	std::snprintf(b, sizeof b,
 		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, lightmap %dx%d at pixel size %d, "
-		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (runs %d), alpha pitch %d, smooth %d, copyalpha %d",
+		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (blits %d, levels %d), alpha pitch %d, smooth %d, copyalpha %d",
 		st.lightsTotal, st.lightsVisible, st.lightsRecomputed, st.raysCast, st.composes,
 		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor,
 		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, methodName(S.strategy), S.strategyConfirmed ? " (confirmed)" : "",
-		S.runCount, S.alphaPitch, S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
+		S.runCount, S.levels, S.alphaPitch, S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
 	return text(S, b);
 }
 
