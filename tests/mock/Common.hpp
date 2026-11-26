@@ -86,6 +86,13 @@ struct Surface {
 	bool FillImageWith(const SurfaceFill& f) { lastFill = f.c; return true; }   // colour only: alpha plane untouched
 	bool SetTransparencyToColor(std::uint32_t) { return true; }
 	void SetTransparencyToAlpha() { transparencyFromAlpha = true; }
+	int setAlphaCalls = 0;
+	void SetAlpha(const std::byte* bytes, int pitch) {          // copies from the caller's buffer into our own padded layout
+		++setAlphaCalls;
+		if (!hasAlpha) return;
+		for (std::size_t y = 0; y < h; ++y)
+			for (std::size_t x = 0; x < w; ++x) alphaPlane[y * alphaPitch + x] = (std::uint8_t)bytes[y * pitch + x];
+	}
 	bool HasAlpha() const { return hasAlpha; }
 	int GetAlphaPitch() const { return alphaPitch; }
 	Holder<std::uint8_t*, Surface> GetAlphaBytes() {

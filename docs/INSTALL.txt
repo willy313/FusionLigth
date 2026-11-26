@@ -38,6 +38,12 @@ First test (about two minutes)
      Always:          Lumen: Move light 1 to X=XMouse, Y=YMouse
 4. Run. Expect darkness with a smooth circle of light following the mouse, and a shadow behind each wall.
 
+If the application crashes without any message
+----------------------------------------------
+Lumen writes its first steps to a small text file. Press Win+R, type  %TEMP%\Lumen-debug.log  and press Enter
+(or open the file from the Temp folder). The LAST line is the step that was running when the crash happened.
+Send me the whole file; it is at most 80 short lines and is overwritten every time the application starts.
+
 What to report back
 -------------------
  * It works / it crashes / it is not visible. For a crash, the exact text of the error box.

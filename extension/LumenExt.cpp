@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -13,15 +15,36 @@ static_assert(sizeof(TCHAR) == sizeof(wchar_t), "Lumen is built for the Unicode 
 // Surface, SurfaceFill, ColorRGB, BlitOptions, Point and Rect live in the DarkEdif namespace in this SDK.
 using namespace DarkEdif;
 
+// ------------------------------------------------------------------ breadcrumbs
+// A hard crash shows no message, so the first few steps of every risky path are appended to %TEMP%\\Lumen-debug.log.
+// The last line in that file is the step that crashed. Bounded (80 lines per run) so it never grows.
+static std::string crumbPath() {
+#ifdef _WIN32
+	char b[MAX_PATH + 2] = { 0 };
+	const DWORD n = GetTempPathA(MAX_PATH, b);
+	return std::string(b, n) + "Lumen-debug.log";
+#else
+	const char* t = std::getenv("TMPDIR");
+	return std::string(t ? t : "/tmp") + "/Lumen-debug.log";
+#endif
+}
+static void crumb(const std::string& msg) {
+	static int n = 0;
+	if (n >= 80) return;
+	std::ofstream f(crumbPath(), n == 0 ? std::ios::trunc : std::ios::app);
+	if (f) { f << msg << "\n"; f.flush(); ++n; }
+}
+
 // ------------------------------------------------------------------ graphics
 
 // The darkness is ONE CPU surface: RGB all black plus a separate ALPHA PLANE holding the darkness. SetPixel only moves
-// colour, not alpha (field notes: "GetPixel/SetPixel move colour only, not alpha"), so the alpha plane is written
-// directly through GetAlphaBytes(). CopySection applies the source alpha unless BlitOptions::CopyAlpha is set (that
-// flag copies the alpha channel to the destination instead of applying it).
+// colour, not alpha (field notes), so the alpha plane is replaced with SetAlpha(bytes, pitch), which copies from a buffer
+// we own (no assumptions about the surface's internal layout). CopySection applies the source alpha unless
+// BlitOptions::CopyAlpha is set (that flag copies the alpha channel to the destination instead of applying it).
 struct LumenGfx {
 	std::unique_ptr<Surface> mask;
 	int mw = 0, mh = 0;
+	std::vector<std::uint8_t> alphaBuf;
 };
 
 LumenState::~LumenState() { delete gfx; }
@@ -30,10 +53,13 @@ static void ensureMask(Extension& e, LumenState& S, int mw, int mh) {
 	if (!S.gfx) S.gfx = new LumenGfx();
 	LumenGfx& G = *S.gfx;
 	if (G.mask && G.mw == mw && G.mh == mh) return;
+	crumb("mask: create " + std::to_string(mw) + "x" + std::to_string(mh) + " alpha surface");
 	G.mask = std::make_unique<Surface>(e.rhPtr, true, false, mw, mh, true);   // alpha = true: per-pixel transparency
+	crumb("mask: created, filling RGB black");
 	G.mask->FillImageWith(SurfaceFill::Solid(ColorRGB(0, 0, 0)));               // RGB is black everywhere, forever
 	G.mw = mw; G.mh = mh;
 	S.maskHasAlpha = G.mask->HasAlpha();
+	crumb(std::string("mask: ready, HasAlpha=") + (S.maskHasAlpha ? "1" : "0"));
 	S.maskDirty = true;
 }
 
@@ -43,22 +69,21 @@ static void rebuildMask(Extension& e, LumenState& S) {
 	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
 	if (px.size() != (size_t)mw * mh) return;
 	ensureMask(e, S, mw, mh);
-	Surface& m = *S.gfx->mask;
-	m.SetTransparencyToAlpha();                     // transparency comes from the alpha plane, not from a colour key
-	if (!m.HasAlpha()) { S.lastError = "Lumen mask surface has no alpha plane"; return; }
-	{
-		auto lock = m.GetAlphaBytes();                // locks the alpha plane until `lock` goes out of scope
-		std::uint8_t* alpha = *lock;
-		const int pitch = m.GetAlphaPitch();          // bytes per row, may include padding
-		if (!alpha) { S.lastError = "Lumen could not lock the mask alpha plane"; return; }
-		S.alphaPitch = pitch;
-		for (int y = 0; y < mh; ++y) {
-			std::uint8_t* row = alpha + (std::ptrdiff_t)y * pitch;
-			const uint32_t* src = &px[(size_t)y * mw];
-			for (int x = 0; x < mw; ++x)
-				row[x] = (std::uint8_t)(src[x] >> 24);   // darkness: 0 = transparent (lit), 255 = opaque black
-		}
+	LumenGfx& G = *S.gfx;
+	if (!G.mask->HasAlpha()) { S.lastError = "Lumen mask surface has no alpha plane"; return; }
+	const int pitch = (mw + 3) / 4 * 4;                 // rows padded to 4 bytes, like Fusion's own alpha planes
+	G.alphaBuf.assign((size_t)pitch * mh, 0);
+	for (int y = 0; y < mh; ++y) {
+		std::uint8_t* row = &G.alphaBuf[(size_t)y * pitch];
+		const uint32_t* src = &px[(size_t)y * mw];
+		for (int x = 0; x < mw; ++x)
+			row[x] = (std::uint8_t)(src[x] >> 24);       // darkness: 0 = transparent (lit), 255 = opaque black
 	}
+	S.alphaPitch = pitch;
+	static int logged = 0;
+	if (logged < 3) { ++logged; crumb("mask: SetAlpha begin, pitch " + std::to_string(pitch)); }
+	G.mask->SetAlpha(reinterpret_cast<const std::byte*>(G.alphaBuf.data()), pitch);
+	if (logged <= 3) crumb("mask: SetAlpha done");
 	S.lastMaskMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -85,6 +110,7 @@ static bool objRect(Extension& e, long fixed, lumen::IRect& r) {
 // ------------------------------------------------------------------ frame loop
 
 void Extension::LumenInit(bool backdropObstacles, const std::wstring& pixelSize, int objW, int objH) {
+	crumb("init: begin");
 	lumen::Engine::Settings st;
 	const long ps = std::wcstol(pixelSize.c_str(), nullptr, 10);
 	st.divisor = (ps >= 1 && ps <= 8) ? (int)ps : 2;
@@ -93,6 +119,7 @@ void Extension::LumenInit(bool backdropObstacles, const std::wstring& pixelSize,
 	fw = rhPtr->rhFrame->hdr.Width;
 	fh = rhPtr->rhFrame->hdr.Height;
 #endif
+	crumb("init: frame " + std::to_string(fw) + "x" + std::to_string(fh) + ", pixel size " + std::to_string(st.divisor));
 	lx = std::make_unique<LumenState>(fw, fh, st);
 	lx->backdropObstacles = backdropObstacles;
 	int ow = objW, oh = objH;
@@ -103,11 +130,14 @@ void Extension::LumenInit(bool backdropObstacles, const std::wstring& pixelSize,
 #endif
 	// Manual display: without a size Fusion never calls Display() (field notes).
 	if (ow > 0 && oh > 0) { rdPtr->get_rHo()->SetSize(ow, oh); lx->objW = ow; lx->objH = oh; }
+	crumb("init: done, object size " + std::to_string(ow) + "x" + std::to_string(oh));
 }
 
 REFLAG Extension::LumenHandle() {
 	if (!lx) return (REFLAG)0;
 	LumenState& S = *lx;
+	static int handleCalls = 0;
+	if (handleCalls < 3) crumb("handle #" + std::to_string(++handleCalls));
 	const auto t0 = std::chrono::steady_clock::now();
 #ifdef FUSION_INTERNAL_ACCESS
 	S.winW = rhPtr->rh3.rh3WindowSx;
@@ -143,11 +173,15 @@ REFLAG Extension::LumenHandle() {
 REFLAG Extension::LumenDisplay() {
 	if (!lx) return (REFLAG)0;
 	LumenState& S = *lx;
+	static int displayCalls = 0;
+	const bool logIt = displayCalls < 3;
+	if (logIt) { ++displayCalls; crumb("display #" + std::to_string(displayCalls) + ": begin"); }
 	if (S.engine.pixels().empty()) return (REFLAG)0;
 	if (S.maskDirty) { rebuildMask(*this, S); S.maskDirty = false; }
 	if (!S.gfx || !S.gfx->mask) return (REFLAG)0;
 	LumenGfx& G = *S.gfx;
 
+	if (logIt) crumb("display: getting frame surface");
 	Surface& D = Surface::CreateFromMainWindow(rhPtr);   // a reference to Fusion's frame surface
 	// Camera read at draw time (no one-tick lag); the lightmap itself was built in Handle().
 	const int x0 = S.engine.originPxX() - rhPtr->get_WindowX(), y0 = S.engine.originPxY() - rhPtr->get_WindowY();
@@ -156,7 +190,9 @@ REFLAG Extension::LumenDisplay() {
 	const Rect dst(x0, y0, x0 + S.engine.blitWidth(), y0 + S.engine.blitHeight(), true);
 	BlitOptions flags = S.smooth ? BlitOptions::AntiAliasing : BlitOptions::None;
 	if (S.copyAlpha) flags = flags | BlitOptions::CopyAlpha;
+	if (logIt) crumb("display: blit " + std::to_string(G.mw) + "x" + std::to_string(G.mh) + " -> (" + std::to_string(x0) + "," + std::to_string(y0) + ") flags " + std::to_string((int)flags));
 	G.mask->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
+	if (logIt) crumb("display: blit done");
 	return (REFLAG)0;
 }
 

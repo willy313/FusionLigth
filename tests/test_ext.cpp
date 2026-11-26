@@ -1,6 +1,10 @@
 #include "Common.hpp"
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace DarkEdif { std::vector<Blit> g_blits; int g_negViolations = 0; bool g_blitWhileLocked = false; const Surface* g_lastBlitSource = nullptr; }
 using DarkEdif::g_blits;
@@ -47,7 +51,8 @@ int main() {
 	CHECK(b0.dr - b0.dl == e.lx->engine.blitWidth() && b0.db - b0.dt == e.lx->engine.blitHeight());
 	const DarkEdif::Surface* mask = DarkEdif::g_lastBlitSource;
 	CHECK(mask && mask->hasAlpha && mask->w == (size_t)e.lx->engine.mapWidth());
-	CHECK(mask->transparencyFromAlpha);                        // transparency taken from the alpha plane
+	CHECK(!mask->transparencyFromAlpha);                       // SetTransparencyToAlpha is not called (behaviour unverified)
+	CHECK(mask->setAlphaCalls >= 1 && mask->alphaLocks == 0);  // alpha plane filled with SetAlpha, never locked
 	CHECK(mask->pixelsSet == 0);                               // SetPixel moves colour only, so it is never used
 	CHECK(!DarkEdif::g_blitWhileLocked && !mask->lockedAlpha); // alpha plane unlocked before the blit
 	CHECK(mask->lastFill == DarkEdif::ColorRGB(0, 0, 0));      // RGB is black
@@ -136,6 +141,11 @@ int main() {
 	e.DetachLight(6); player.ho.x = 500; e.LumenHandle();
 	CHECK(e.LightX(6) == 105.0f);                              // detached lights stay where they are
 
+	{   // breadcrumb log written for diagnosing hard crashes
+		std::ifstream f("/tmp/Lumen-debug.log"); std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+		CHECK(all.find("init: begin") != std::string::npos && all.find("mask: SetAlpha done") != std::string::npos && all.find("display: blit done") != std::string::npos);
+		CHECK(std::count(all.begin(), all.end(), '\n') <= 80);
+	}
 	CHECK(DarkEdif::g_negViolations == 0);                     // negative rect origins are always passed with allowNeg
 	std::printf("%d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;

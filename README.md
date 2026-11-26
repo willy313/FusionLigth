@@ -49,7 +49,7 @@ and the assembly script against the real template's `Extension.hpp/.cpp`, `Editt
 Verified by a real CI build and a first run in Fusion: assembly, compile, link, `DarkEdifPreBuildTool`, loading in Fusion.
 
 Checked against the SDK headers (written from the real declarations, not run in Fusion yet): per-pixel-alpha
-rendering (`Surface(..., alpha = true)`, darkness written into the alpha plane through `GetAlphaBytes()` because `SetPixel` moves colour only, `CopySection` with `BlitOptions::AntiAliasing`),
+rendering (`Surface(..., alpha = true)`, darkness written into the alpha plane with `SetAlpha(bytes, pitch)` because `SetPixel` moves colour only, `CopySection` with `BlitOptions::AntiAliasing`),
 `Runtime.RunObjPtrFromFixed` / `FixedFromRunObjPtr`, `HeaderObject::get_X/get_Y/get_ImgWidth/...`, and Object action
 parameters (`Params::Object`, delivered as `RunObject*`, once per selected instance).
 
@@ -61,6 +61,11 @@ Not verified:
    structures, which the SDK headers do not make safe; use `Add obstacle rectangle` for those, or any object that
    appears in the event editor with `Make object cast shadows`. The `Backdrop obstacles` property is reserved.
 4. Scroll actions apply at the end of the tick, so a light may lag one tick behind a scroll.
+
+## Diagnosing a crash
+
+A hard crash shows no message, so Lumen appends its first steps to `%TEMP%\Lumen-debug.log` (80 lines at most, rewritten
+at each start). The last line names the step that crashed.
 
 ## Stages
 
