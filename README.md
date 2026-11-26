@@ -1,4 +1,5 @@
 # Lumen: a lighting engine for Clickteam Fusion 2.5
+NOTE: This extension is made with Claude
 
 Ambient darkness, many lights, soft falloff, shadows from obstacles. Built on DarkEdif, Windows only, Direct3D 11
 with a software fallback. The overlay object sits on a high layer; each light has a collision layer, and only
