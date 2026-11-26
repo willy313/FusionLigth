@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <array>
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -15,36 +17,81 @@ static_assert(sizeof(TCHAR) == sizeof(wchar_t), "Lumen is built for the Unicode 
 // Surface, SurfaceFill, ColorRGB, BlitOptions, Point and Rect live in the DarkEdif namespace in this SDK.
 using namespace DarkEdif;
 
-// ------------------------------------------------------------------ breadcrumbs
-// A hard crash shows no message, so the first few steps of every risky path are appended to %TEMP%\\Lumen-debug.log.
-// The last line in that file is the step that crashed. Bounded (80 lines per run) so it never grows.
-static std::string crumbPath() {
+// ------------------------------------------------------------------ breadcrumbs and method memory
+// A hard crash shows no message, so the first steps of every risky path are appended to %TEMP%\\Lumen-debug.log;
+// the LAST line is the step that crashed (bounded to 80 lines per run). A second small file, Lumen-method.txt, remembers
+// which drawing method was tried and which was confirmed, so a method that crashed is skipped on the next launch.
+static std::string tempDir() {
 #ifdef _WIN32
 	char b[MAX_PATH + 2] = { 0 };
 	const DWORD n = GetTempPathA(MAX_PATH, b);
-	return std::string(b, n) + "Lumen-debug.log";
+	return std::string(b, n);
 #else
 	const char* t = std::getenv("TMPDIR");
-	return std::string(t ? t : "/tmp") + "/Lumen-debug.log";
+	return std::string(t ? t : "/tmp") + "/";
 #endif
 }
 static void crumb(const std::string& msg) {
 	static int n = 0;
 	if (n >= 80) return;
-	std::ofstream f(crumbPath(), n == 0 ? std::ios::trunc : std::ios::app);
+	std::ofstream f(tempDir() + "Lumen-debug.log", n == 0 ? std::ios::trunc : std::ios::app);
 	if (f) { f << msg << "\n"; f.flush(); ++n; }
 }
 
-// ------------------------------------------------------------------ graphics
+enum { M_ALPHA_LOCK = 0, M_ALPHA_SURFACE = 1, M_RECTS = 2, M_COUNT = 3 };
+static const char* methodName(int m) {
+	return m == M_ALPHA_LOCK ? "alpha lock" : m == M_ALPHA_SURFACE ? "alpha surface" : m == M_RECTS ? "rectangles" : "unset";
+}
+static const std::string kBuildId = std::string(__DATE__) + " " + __TIME__;   // a new build forgets old verdicts
 
-// The darkness is ONE CPU surface: RGB all black plus a separate ALPHA PLANE holding the darkness. SetPixel only moves
-// colour, not alpha (field notes), so the alpha plane is replaced with SetAlpha(bytes, pitch), which copies from a buffer
-// we own (no assumptions about the surface's internal layout). CopySection applies the source alpha unless
-// BlitOptions::CopyAlpha is set (that flag copies the alpha channel to the destination instead of applying it).
+static void markMethod(const char* what, int m) {
+	std::ofstream f(tempDir() + "Lumen-method.txt", std::ios::app);
+	if (f) { f << what << " " << m << "\n"; f.flush(); }
+}
+// A method is "bad" when it was tried but never confirmed (the app died while using it).
+static int chooseMethod() {
+	bool tried[M_COUNT] = { false }, ok[M_COUNT] = { false };
+	{
+		std::ifstream f(tempDir() + "Lumen-method.txt");
+		std::string line;
+		bool sameBuild = false;
+		if (std::getline(f, line) && line == "build " + kBuildId) sameBuild = true;
+		while (sameBuild && std::getline(f, line)) {
+			char w[16] = { 0 }; int m = -1;
+			if (std::sscanf(line.c_str(), "%15s %d", w, &m) == 2 && m >= 0 && m < M_COUNT) {
+				if (std::string(w) == "tried") tried[m] = true;
+				else if (std::string(w) == "ok") ok[m] = true;
+			}
+		}
+		if (!sameBuild) {
+			std::ofstream o(tempDir() + "Lumen-method.txt", std::ios::trunc);
+			if (o) o << "build " << kBuildId << "\n";
+		}
+	}
+	int pick = -1;
+	for (int m = 0; m < M_COUNT && pick < 0; ++m) if (ok[m]) pick = m;           // a confirmed method wins
+	for (int m = 0; m < M_COUNT && pick < 0; ++m) if (!tried[m]) pick = m;       // else the first one not tried yet
+	if (pick < 0) pick = M_RECTS;                                                 // everything died: most conservative
+	crumb(std::string("method: chose ") + methodName(pick));
+	markMethod("tried", pick);
+	return pick;
+}
+
+// ------------------------------------------------------------------ graphics
+// Darkness reaches the screen by one of three methods (see chooseMethod):
+//  0 alpha lock     one black CPU surface with an alpha plane; darkness written through GetAlphaBytes()
+//  1 alpha surface  the same surface; darkness written as grey pixels of GetAlphaSurface()
+//  2 rectangles     no alpha plane: runs of equal darkness are drawn as stretched 1x1 black blits with a Blend
+//                   coefficient (a 1x1 surface stretched with CopySection is confirmed to fill a rectangle on the frame)
+// SetPixel moves colour only, never alpha, and SetAlpha() crashed in testing, so neither is used.
+struct Run { int x0, x1, y0, y1, q; };   // lightmap cells [x0,x1) x [y0,y1), darkness level q (1..kLevels)
+static const int kLevels = 32;
+
 struct LumenGfx {
-	std::unique_ptr<Surface> mask;
+	std::unique_ptr<Surface> mask;       // methods 0 and 1
+	std::unique_ptr<Surface> dot;        // method 2: 1x1 black
 	int mw = 0, mh = 0;
-	std::vector<std::uint8_t> alphaBuf;
+	std::vector<Run> runs;               // method 2
 };
 
 LumenState::~LumenState() { delete gfx; }
@@ -58,9 +105,86 @@ static void ensureMask(Extension& e, LumenState& S, int mw, int mh) {
 	crumb("mask: created, filling RGB black");
 	G.mask->FillImageWith(SurfaceFill::Solid(ColorRGB(0, 0, 0)));               // RGB is black everywhere, forever
 	G.mw = mw; G.mh = mh;
-	S.maskHasAlpha = G.mask->HasAlpha();
-	crumb(std::string("mask: ready, HasAlpha=") + (S.maskHasAlpha ? "1" : "0"));
+	crumb(std::string("mask: ready, HasAlpha=") + (G.mask->HasAlpha() ? "1" : "0"));
 	S.maskDirty = true;
+}
+
+static void ensureDot(Extension& e, LumenState& S) {
+	if (!S.gfx) S.gfx = new LumenGfx();
+	LumenGfx& G = *S.gfx;
+	if (G.dot) return;
+	crumb("dot: create 1x1 black surface");
+	G.dot = std::make_unique<Surface>(e.rhPtr, true, false, 1, 1, false);
+	G.dot->FillImageWith(SurfaceFill::Solid(ColorRGB(0, 0, 0)));
+	crumb("dot: ready");
+}
+
+static void buildRuns(LumenState& S) {
+	LumenGfx& G = *S.gfx;
+	const std::vector<uint32_t>& px = S.engine.pixels();
+	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
+	G.runs.clear();
+	std::vector<Run> open;                                   // runs extended by the previous row
+	std::map<std::array<int, 3>, size_t> openIdx;
+	for (int y = 0; y < mh; ++y) {
+		std::vector<Run> next; std::map<std::array<int, 3>, size_t> nextIdx;
+		int x = 0;
+		while (x < mw) {
+			const int a = (int)(px[(size_t)y * mw + x] >> 24);
+			const int q = (a * kLevels + 127) / 255;
+			int x1 = x + 1;
+			while (x1 < mw && ((int)(px[(size_t)y * mw + x1] >> 24) * kLevels + 127) / 255 == q) ++x1;
+			if (q > 0) {
+				auto it = openIdx.find({ x, x1, q });
+				if (it != openIdx.end()) { Run r = open[it->second]; r.y1 = y + 1; open[it->second].q = -1; next.push_back(r); }
+				else next.push_back({ x, x1, y, y + 1, q });
+				nextIdx[{ x, x1, q }] = next.size() - 1;
+			}
+			x = x1;
+		}
+		for (const Run& r : open) if (r.q > 0) G.runs.push_back(r);   // not extended: finished
+		open.swap(next); openIdx.swap(nextIdx);
+	}
+	for (const Run& r : open) G.runs.push_back(r);
+	S.runCount = (int)G.runs.size();
+}
+
+static void writeAlphaLock(Extension& e, LumenState& S) {
+	LumenGfx& G = *S.gfx;
+	const std::vector<uint32_t>& px = S.engine.pixels();
+	const int mw = G.mw, mh = G.mh;
+	static int logged = 0;
+	if (logged < 2) { ++logged; crumb("alpha lock: GetAlphaBytes begin"); }
+	auto lock = G.mask->GetAlphaBytes();              // locks the alpha plane until `lock` goes out of scope
+	std::uint8_t* alpha = *lock;
+	const int pitch = G.mask->GetAlphaPitch();
+	if (logged <= 2) crumb("alpha lock: locked, pitch " + std::to_string(pitch) + (alpha ? "" : " (NULL pointer)"));
+	if (!alpha) { S.lastError = "Lumen could not lock the alpha plane"; return; }
+	S.alphaPitch = pitch;
+	for (int y = 0; y < mh; ++y) {
+		std::uint8_t* row = alpha + (std::ptrdiff_t)y * pitch;
+		const uint32_t* src = &px[(size_t)y * mw];
+		for (int x = 0; x < mw; ++x) row[x] = (std::uint8_t)(src[x] >> 24);   // 0 = lit (transparent), 255 = opaque black
+	}
+	if (logged <= 2) crumb("alpha lock: written");
+	(void)e;
+}
+
+static void writeAlphaSurface(LumenState& S) {
+	LumenGfx& G = *S.gfx;
+	const std::vector<uint32_t>& px = S.engine.pixels();
+	static int logged = 0;
+	if (logged < 2) { ++logged; crumb("alpha surface: GetAlphaSurface begin"); }
+	auto holder = G.mask->GetAlphaSurface();
+	Surface* as = *holder;
+	if (logged <= 2) crumb(as ? "alpha surface: got it" : "alpha surface: NULL");
+	if (!as) { S.lastError = "Lumen could not get the alpha surface"; return; }
+	for (int y = 0; y < G.mh; ++y)
+		for (int x = 0; x < G.mw; ++x) {
+			const std::uint32_t a = px[(size_t)y * G.mw + x] >> 24;
+			as->SetPixel(Point(x, y), (a << 16) | (a << 8) | a, false);   // grey value = alpha
+		}
+	if (logged <= 2) crumb("alpha surface: written");
 }
 
 static void rebuildMask(Extension& e, LumenState& S) {
@@ -68,22 +192,15 @@ static void rebuildMask(Extension& e, LumenState& S) {
 	const std::vector<uint32_t>& px = S.engine.pixels();
 	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
 	if (px.size() != (size_t)mw * mh) return;
-	ensureMask(e, S, mw, mh);
-	LumenGfx& G = *S.gfx;
-	if (!G.mask->HasAlpha()) { S.lastError = "Lumen mask surface has no alpha plane"; return; }
-	const int pitch = (mw + 3) / 4 * 4;                 // rows padded to 4 bytes, like Fusion's own alpha planes
-	G.alphaBuf.assign((size_t)pitch * mh, 0);
-	for (int y = 0; y < mh; ++y) {
-		std::uint8_t* row = &G.alphaBuf[(size_t)y * pitch];
-		const uint32_t* src = &px[(size_t)y * mw];
-		for (int x = 0; x < mw; ++x)
-			row[x] = (std::uint8_t)(src[x] >> 24);       // darkness: 0 = transparent (lit), 255 = opaque black
+	if (S.strategy < 0) S.strategy = S.forcedStrategy >= 0 ? S.forcedStrategy : chooseMethod();
+	if (S.strategy == M_RECTS) {
+		ensureDot(e, S);
+		buildRuns(S);
+	} else {
+		ensureMask(e, S, mw, mh);
+		if (!S.gfx->mask->HasAlpha()) { S.lastError = "Lumen mask surface has no alpha plane"; return; }
+		if (S.strategy == M_ALPHA_LOCK) writeAlphaLock(e, S); else writeAlphaSurface(S);
 	}
-	S.alphaPitch = pitch;
-	static int logged = 0;
-	if (logged < 3) { ++logged; crumb("mask: SetAlpha begin, pitch " + std::to_string(pitch)); }
-	G.mask->SetAlpha(reinterpret_cast<const std::byte*>(G.alphaBuf.data()), pitch);
-	if (logged <= 3) crumb("mask: SetAlpha done");
 	S.lastMaskMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -178,21 +295,39 @@ REFLAG Extension::LumenDisplay() {
 	if (logIt) { ++displayCalls; crumb("display #" + std::to_string(displayCalls) + ": begin"); }
 	if (S.engine.pixels().empty()) return (REFLAG)0;
 	if (S.maskDirty) { rebuildMask(*this, S); S.maskDirty = false; }
-	if (!S.gfx || !S.gfx->mask) return (REFLAG)0;
+	if (!S.gfx || (S.strategy == M_RECTS ? !S.gfx->dot : !S.gfx->mask)) return (REFLAG)0;
 	LumenGfx& G = *S.gfx;
 
 	if (logIt) crumb("display: getting frame surface");
 	Surface& D = Surface::CreateFromMainWindow(rhPtr);   // a reference to Fusion's frame surface
 	// Camera read at draw time (no one-tick lag); the lightmap itself was built in Handle().
-	const int x0 = S.engine.originPxX() - rhPtr->get_WindowX(), y0 = S.engine.originPxY() - rhPtr->get_WindowY();
-	// Rect(l, t, r, b) rejects negative coordinates unless allowNeg is true, and our destination can start off screen.
-	const Rect src(0, 0, G.mw, G.mh);
-	const Rect dst(x0, y0, x0 + S.engine.blitWidth(), y0 + S.engine.blitHeight(), true);
-	BlitOptions flags = S.smooth ? BlitOptions::AntiAliasing : BlitOptions::None;
-	if (S.copyAlpha) flags = flags | BlitOptions::CopyAlpha;
-	if (logIt) crumb("display: blit " + std::to_string(G.mw) + "x" + std::to_string(G.mh) + " -> (" + std::to_string(x0) + "," + std::to_string(y0) + ") flags " + std::to_string((int)flags));
-	G.mask->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
-	if (logIt) crumb("display: blit done");
+	const int d = S.engine.settings().divisor;
+	const int ox = S.engine.originPxX() - rhPtr->get_WindowX(), oy = S.engine.originPxY() - rhPtr->get_WindowY();
+	if (S.strategy == M_RECTS) {
+		if (logIt) crumb("display: rectangles " + std::to_string(G.runs.size()));
+		const Rect one(0, 0, 1, 1);
+		for (const Run& r : G.runs) {
+			const double opacity = (double)r.q / kLevels;
+			int coef = (int)std::lround((S.invertBlend ? opacity : 1.0 - opacity) * 128.0);   // Fusion's convention: 0 = opaque
+			coef = (std::max)(0, (std::min)(128, coef));
+			const Rect dst(ox + r.x0 * d, oy + r.y0 * d, ox + r.x1 * d, oy + r.y1 * d, true);
+			G.dot->CopySection(one, D, dst, false, BlitOptions::None, BlitOperation::Blend, (std::uint8_t)coef);
+		}
+	} else {
+		// Rect(l, t, r, b) rejects negative coordinates unless allowNeg is true, and our destination can start off screen.
+		const Rect src(0, 0, G.mw, G.mh);
+		const Rect dst(ox, oy, ox + S.engine.blitWidth(), oy + S.engine.blitHeight(), true);
+		BlitOptions flags = S.smooth ? BlitOptions::AntiAliasing : BlitOptions::None;
+		if (S.copyAlpha) flags = flags | BlitOptions::CopyAlpha;
+		if (logIt) crumb("display: blit " + std::to_string(G.mw) + "x" + std::to_string(G.mh) + " -> (" + std::to_string(ox) + "," + std::to_string(oy) + ") flags " + std::to_string((int)flags));
+		G.mask->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
+	}
+	if (logIt) crumb("display: draw done");
+	if (!S.strategyConfirmed) {   // the method survived a complete draw: remember it
+		S.strategyConfirmed = true;
+		if (S.forcedStrategy < 0) markMethod("ok", S.strategy);
+		crumb(std::string("method: confirmed ") + methodName(S.strategy));
+	}
 	return (REFLAG)0;
 }
 
@@ -266,9 +401,14 @@ void Extension::RemoveShadowCasterObject(RunObject* p0) {
 
 void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->maskDirty = true; lx->forceRedraw = true; }
 
-void Extension::SetRenderOptions(int p0, int p1) {
+void Extension::SetRenderOptions(int p0, int p1, int p2, int p3) {
 	lx->smooth = p0 != 0;
 	lx->copyAlpha = p1 != 0;
+	lx->invertBlend = p3 != 0;
+	lx->forcedStrategy = (p2 >= 0 && p2 < M_COUNT) ? p2 : -1;
+	lx->strategy = lx->forcedStrategy;               // -1 = choose again automatically
+	lx->strategyConfirmed = lx->forcedStrategy >= 0; // forced methods are not remembered
+	lx->maskDirty = true;
 	lx->forceRedraw = true;
 }
 
@@ -290,14 +430,14 @@ float Extension::Ambient() { return lx->engine.ambient(); }
 const TCHAR* Extension::DebugInfo() {
 	LumenState& S = *lx;
 	const lumen::Stats& st = S.engine.stats();
-	char b[480];
+	char b[520];
 	std::snprintf(b, sizeof b,
 		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, lightmap %dx%d at pixel size %d, "
-		"window %dx%d, handle %.2f ms, mask write %.2f ms, mask has alpha %d (pitch %d), smooth %d, copyalpha %d",
+		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (runs %d), alpha pitch %d, smooth %d, copyalpha %d",
 		st.lightsTotal, st.lightsVisible, st.lightsRecomputed, st.raysCast, st.composes,
 		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor,
-		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, S.maskHasAlpha ? 1 : 0, S.alphaPitch,
-		S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
+		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, methodName(S.strategy), S.strategyConfirmed ? " (confirmed)" : "",
+		S.runCount, S.alphaPitch, S.smooth ? 1 : 0, S.copyAlpha ? 1 : 0);
 	return text(S, b);
 }
 

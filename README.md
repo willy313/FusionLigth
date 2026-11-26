@@ -44,12 +44,12 @@ one moving light about 0.8 ms per frame, scrolling about 0.5 ms per frame.
 ## What is verified and what is not
 
 Verified here: the core (108 checks), the extension layer against a mock that enforces the real SDK's rules for
-`Point`, `Rect`, `SetPixel` and `CopySection` (536 checks), that the generated declarations match the C++ signatures,
+`Point`, `Rect`, `SetPixel` and `CopySection` (557 checks), that the generated declarations match the C++ signatures,
 and the assembly script against the real template's `Extension.hpp/.cpp`, `Edittime.cpp` and `DarkExt.json`.
 Verified by a real CI build and a first run in Fusion: assembly, compile, link, `DarkEdifPreBuildTool`, loading in Fusion.
 
 Checked against the SDK headers (written from the real declarations, not run in Fusion yet): per-pixel-alpha
-rendering (`Surface(..., alpha = true)`, darkness written into the alpha plane with `SetAlpha(bytes, pitch)` because `SetPixel` moves colour only, `CopySection` with `BlitOptions::AntiAliasing`),
+rendering (`Surface(..., alpha = true)`, darkness written into the alpha plane (`GetAlphaBytes()` or `GetAlphaSurface()`; `SetPixel` moves colour only and `SetAlpha()` crashed in testing), `CopySection` with `BlitOptions::AntiAliasing`),
 `Runtime.RunObjPtrFromFixed` / `FixedFromRunObjPtr`, `HeaderObject::get_X/get_Y/get_ImgWidth/...`, and Object action
 parameters (`Params::Object`, delivered as `RunObject*`, once per selected instance).
 
@@ -65,7 +65,9 @@ Not verified:
 ## Diagnosing a crash
 
 A hard crash shows no message, so Lumen appends its first steps to `%TEMP%\Lumen-debug.log` (80 lines at most, rewritten
-at each start). The last line names the step that crashed.
+at each start); the last line names the step that crashed. Lumen also has three drawing methods and remembers in
+`%TEMP%\Lumen-method.txt` which was tried and which was confirmed: a method that crashed is skipped on the next launch, so
+restarting the application a couple of times finds one that works. See `docs/INSTALL.txt`.
 
 ## Stages
 

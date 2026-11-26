@@ -59,8 +59,10 @@ ACTIONS = [
      [(O, "Object that casts shadows"), (I, "Shadow layer (Fusion layer number)")], "Shadows"),
  Act("RemoveShadowCasterObject", "Stop object casting shadows", "Stop %0 casting shadows", [(O, "Object")], "Shadows"),
  Act("SetQuality", "Set lightmap pixel size", "Set lightmap pixel size to %0 (1 = sharpest, 4 = fastest)", [(I, "Pixel size (1 to 16)")], "Settings"),
- Act("SetRenderOptions", "Debug: render options", "Debug: smooth edges %0 (1/0), copy-alpha blit flag %1 (1/0)",
-     [(I, "Smooth edges (1/0)"), (I, "Copy-alpha blit flag (1/0)")], "Settings"),
+ Act("SetRenderOptions", "Debug: render options",
+     "Debug: smooth edges %0 (1/0), copy-alpha flag %1 (1/0), method %2 (-1 auto, 0, 1, 2), invert blend %3 (1/0)",
+     [(I, "Smooth edges (1/0)"), (I, "Copy-alpha blit flag (1/0)"), (I, "Method (-1 = automatic, 0 = alpha lock, 1 = alpha surface, 2 = rectangles)"),
+      (I, "Invert blend direction, rectangles method (1/0)")], "Settings"),
 ]
 
 CONDITIONS = [

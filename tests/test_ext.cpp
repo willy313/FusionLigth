@@ -1,4 +1,8 @@
 #include "Common.hpp"
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <sstream>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -17,7 +21,15 @@ static RunObject makeObj(int fixed, int x, int y, int w, int h, int sx, int sy) 
 	RunObject o; o.fixed = fixed; o.ho.x = x; o.ho.y = y; o.ho.imgW = w; o.ho.imgH = h; o.ho.spotX = sx; o.ho.spotY = sy; return o;
 }
 
+static std::string slurp(const std::string& p) { std::ifstream f(p); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
+static std::string makeDir(const char* name) {
+	std::string d = (std::filesystem::temp_directory_path() / name).string();
+	std::filesystem::remove_all(d); std::filesystem::create_directories(d); return d;
+}
+
 int main() {
+	const std::string dir1 = makeDir("lumen_t1");
+	setenv("TMPDIR", dir1.c_str(), 1);
 	Frame frame; RunHeader rh; rh.rhFrame = &frame;
 	EDITDATA ed;
 	RunObject self; HeaderObject& ho = self.ho;
@@ -49,10 +61,15 @@ int main() {
 	CHECK(b0.flags == BlitOptions::AntiAliasing);
 	CHECK(b0.srcW == e.lx->engine.mapWidth() && b0.srcH == e.lx->engine.mapHeight());
 	CHECK(b0.dr - b0.dl == e.lx->engine.blitWidth() && b0.db - b0.dt == e.lx->engine.blitHeight());
+	CHECK(e.lx->strategy == 0 && e.lx->strategyConfirmed);     // fresh state: first method (alpha lock) is chosen and confirmed
+	{
+		const std::string st = slurp(dir1 + "/Lumen-method.txt");
+		CHECK(st.rfind("build ", 0) == 0 && st.find("tried 0\n") != std::string::npos && st.find("ok 0\n") != std::string::npos);
+	}
 	const DarkEdif::Surface* mask = DarkEdif::g_lastBlitSource;
 	CHECK(mask && mask->hasAlpha && mask->w == (size_t)e.lx->engine.mapWidth());
-	CHECK(!mask->transparencyFromAlpha);                       // SetTransparencyToAlpha is not called (behaviour unverified)
-	CHECK(mask->setAlphaCalls >= 1 && mask->alphaLocks == 0);  // alpha plane filled with SetAlpha, never locked
+	CHECK(!mask->transparencyFromAlpha && mask->setAlphaCalls == 0);   // neither SetTransparencyToAlpha nor SetAlpha (SetAlpha crashed)
+	CHECK(mask->alphaLocks >= 1);                              // alpha plane written through the lock
 	CHECK(mask->pixelsSet == 0);                               // SetPixel moves colour only, so it is never used
 	CHECK(!DarkEdif::g_blitWhileLocked && !mask->lockedAlpha); // alpha plane unlocked before the blit
 	CHECK(mask->lastFill == DarkEdif::ColorRGB(0, 0, 0));      // RGB is black
@@ -96,9 +113,9 @@ int main() {
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
 
 	// render options + quality + errors
-	e.SetRenderOptions(0, 1); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(0, 1, 0, 0); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits.size() == 1 && g_blits[0].flags == BlitOptions::CopyAlpha);
-	e.SetRenderOptions(1, 0); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(1, 0, -1, 0); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits[0].flags == BlitOptions::AntiAliasing);
 	e.SetQuality(4); CHECK(e.LumenHandle() == REFLAG::DISPLAY && e.lx->engine.settings().divisor == 4);
 	e.LumenDisplay();
@@ -141,9 +158,67 @@ int main() {
 	e.DetachLight(6); player.ho.x = 500; e.LumenHandle();
 	CHECK(e.LightX(6) == 105.0f);                              // detached lights stay where they are
 
+	// ---- method 1: grey pixels of the alpha surface
+	{
+		e.CreateLight(30, 200, 150, 100, 1.0f, 1); e.LumenHandle();
+		e.SetRenderOptions(1, 0, 1, 0); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		const DarkEdif::Surface* m = DarkEdif::g_lastBlitSource;
+		CHECK(g_blits.size() == 1 && g_blits[0].op == BlitOperation::Copy && m->alphaView);
+		const int gx = 200 / 2 - e.lx->engine.originPxX() / 2, gy = 150 / 2 - e.lx->engine.originPxY() / 2;
+		CHECK(m->alphaPlane[(size_t)gy * m->alphaPitch + gx] < 20 && m->alphaPlane[0] == 255);
+		CHECK(e.lx->strategy == 1 && e.lx->strategyConfirmed);
+	}
+	// ---- method 2: rectangles, each lit cell covered exactly once, coefficient follows Fusion's convention
+	for (int invert = 0; invert < 2; ++invert) {
+		e.SetRenderOptions(1, 0, 2, invert); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		CHECK(!g_blits.empty() && (int)g_blits.size() == e.lx->runCount);
+		const int d = e.lx->engine.settings().divisor, mw = e.lx->engine.mapWidth(), mh = e.lx->engine.mapHeight();
+		const int ox = e.lx->engine.originPxX() - rh.get_WindowX(), oy = e.lx->engine.originPxY() - rh.get_WindowY();
+		std::vector<int> cover((size_t)mw * mh, 0), level((size_t)mw * mh, 0);
+		bool shape = true;
+		for (auto& b : g_blits) {
+			if (b.op != BlitOperation::Blend || b.srcW != 1 || b.srcH != 1 || b.flags != BlitOptions::None) shape = false;
+			const int q = (int)std::lround(32.0 * (invert ? (b.coef / 128.0) : (1.0 - b.coef / 128.0)));
+			for (int cy = (b.dt - oy) / d; cy < (b.db - oy) / d; ++cy)
+				for (int cx = (b.dl - ox) / d; cx < (b.dr - ox) / d; ++cx) { ++cover[(size_t)cy * mw + cx]; level[(size_t)cy * mw + cx] = q; }
+		}
+		CHECK(shape);
+		bool exact = true;
+		for (int y = 0; y < mh; ++y) for (int x = 0; x < mw; ++x) {
+			const int a = (int)(e.lx->engine.pixels()[(size_t)y * mw + x] >> 24);
+			const int q = (a * 32 + 127) / 255;
+			if (cover[(size_t)y * mw + x] != (q > 0 ? 1 : 0) || (q > 0 && level[(size_t)y * mw + x] != q)) exact = false;
+		}
+		CHECK(exact);
+	}
+	e.SetRenderOptions(1, 0, -1, 0);
+
+	// ---- self-healing method choice: a method that was tried but never confirmed (the app died) is skipped next launch
+	{
+		const std::string header = slurp(dir1 + "/Lumen-method.txt").substr(0, slurp(dir1 + "/Lumen-method.txt").find('\n') + 1);
+		auto launch = [&](const char* name, const std::string& content) {
+			const std::string d = makeDir(name);
+			std::ofstream(d + "/Lumen-method.txt") << content;
+			setenv("TMPDIR", d.c_str(), 1);
+			Frame fr; RunHeader r2; r2.rhFrame = &fr; EDITDATA ed2; RunObject so;
+			Extension x(&r2, &so, &ed2);
+			x.CreateLight(1, 100, 100, 60, 1.0f, 1); x.LumenHandle(); x.LumenDisplay();
+			const int m = x.lx->strategy;
+			return std::make_pair(m, slurp(d + "/Lumen-method.txt"));
+		};
+		CHECK(launch("lumen_t2", header + "tried 0\n").first == 1);                  // 0 crashed -> 1
+		CHECK(launch("lumen_t3", header + "tried 0\ntried 1\n").first == 2);         // 0 and 1 crashed -> rectangles
+		CHECK(launch("lumen_t4", header + "tried 0\ntried 1\ntried 2\n").first == 2); // all died: most conservative
+		CHECK(launch("lumen_t5", header + "tried 0\ntried 1\nok 1\n").first == 1);  // a confirmed method wins
+		CHECK(launch("lumen_t6", header + "tried 0\nok 2\n").first == 2);
+		CHECK(launch("lumen_t7", "build some other build\ntried 0\ntried 1\n").first == 0);   // old build's verdicts are forgotten
+		auto r = launch("lumen_t8", header + "tried 0\n");
+		CHECK(r.second.find("tried 1\n") != std::string::npos && r.second.find("ok 1\n") != std::string::npos);
+		setenv("TMPDIR", dir1.c_str(), 1);
+	}
 	{   // breadcrumb log written for diagnosing hard crashes
-		std::ifstream f("/tmp/Lumen-debug.log"); std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-		CHECK(all.find("init: begin") != std::string::npos && all.find("mask: SetAlpha done") != std::string::npos && all.find("display: blit done") != std::string::npos);
+		std::string all = slurp(dir1 + "/Lumen-debug.log");
+		CHECK(all.find("init: begin") != std::string::npos && all.find("alpha lock: written") != std::string::npos && all.find("display: draw done") != std::string::npos);
 		CHECK(std::count(all.begin(), all.end(), '\n') <= 80);
 	}
 	CHECK(DarkEdif::g_negViolations == 0);                     // negative rect origins are always passed with allowNeg

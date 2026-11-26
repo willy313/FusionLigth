@@ -19,11 +19,15 @@ struct LumenState {
 	int lastCamX = -999999, lastCamY = -999999;
 	bool smooth = true;              // BlitOptions::AntiAliasing: smooth stretching of the lightmap
 	bool copyAlpha = false;          // BlitOptions::CopyAlpha COPIES alpha instead of applying it, so it is off
+	bool invertBlend = false;        // rectangles strategy: flips the Blend coefficient direction
+	int strategy = -1;               // how darkness reaches the screen; -1 = not chosen yet (see LumenExt.cpp)
+	int forcedStrategy = -1;         // set by the debug action; -1 = automatic
+	bool strategyConfirmed = false;  // the first complete draw with this strategy has finished
+	int runCount = 0;                // rectangles strategy: number of blits per draw
 	int lastLightId = 0, nextAutoId = 1;
 	std::string lastError;
 	std::wstring scratchW;           // backing store for text expressions
 	double lastRenderMs = 0, lastMaskMs = 0;
-	bool maskHasAlpha = false;
 	int alphaPitch = 0;
 
 	LumenState(int fw, int fh, const lumen::Engine::Settings& s) : engine(fw, fh, s), frameW(fw), frameH(fh) {}

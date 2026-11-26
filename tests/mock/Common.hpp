@@ -77,6 +77,7 @@ struct Surface {
 	std::size_t w, h; bool hasAlpha; long pixelsSet = 0; std::vector<std::uint32_t> pix;
 	std::vector<std::uint8_t> alphaPlane; int alphaPitch = 0; bool lockedAlpha = false; int alphaLocks = 0; bool transparencyFromAlpha = false;
 	std::uint32_t lastFill = 0;
+	Surface* alphaParent = nullptr; std::unique_ptr<Surface> alphaView;
 	Surface(RunHeader*, bool, bool, std::size_t w_, std::size_t h_, bool alpha) : w(w_), h(h_), hasAlpha(alpha), pix(w_ * h_, 0) {
 		alphaPitch = (int)((w_ + 3) / 4 * 4);                  // rows are padded, like the real alpha plane
 		if (alpha) alphaPlane.assign((std::size_t)alphaPitch * h_, 255);   // Fusion starts opaque
@@ -99,8 +100,18 @@ struct Surface {
 		lockedAlpha = true; ++alphaLocks;
 		return Holder<std::uint8_t*, Surface>(this, hasAlpha ? alphaPlane.data() : nullptr, [](Surface* s, std::uint8_t*) { s->lockedAlpha = false; });
 	}
+	Holder<Surface*, Surface> GetAlphaSurface() {
+		alphaView = std::make_unique<Surface>(nullptr, true, false, w, h, false);
+		alphaView->alphaParent = this;
+		return Holder<Surface*, Surface>(this, alphaView.get(), [](Surface*, Surface*) {});
+	}
 	void SetPixel(Point p, std::uint32_t c, bool includeAlpha = true) {     // moves COLOUR only, like the real one
 		++pixelsSet; (void)includeAlpha;
+		if (alphaParent) {                                                  // a view of the alpha plane: grey value = alpha
+			if (p.x >= 0 && p.y >= 0 && (std::size_t)p.x < w && (std::size_t)p.y < h)
+				alphaParent->alphaPlane[(std::size_t)p.y * alphaParent->alphaPitch + p.x] = (std::uint8_t)(c & 0xFF);
+			return;
+		}
 		if (p.x >= 0 && p.y >= 0 && (std::size_t)p.x < w && (std::size_t)p.y < h) pix[(std::size_t)p.y * w + p.x] = c & 0x00FFFFFF;
 	}
 	bool CopySection(Rect s, Surface&, Rect d, bool = true, BlitOptions f = BlitOptions::CopyAlpha,
