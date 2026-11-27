@@ -17,8 +17,8 @@ struct LumenState {
 	int objW = 0, objH = 0;          // size last given to the run object (manual display needs one)
 	int frameW = 0, frameH = 0;
 	int lastCamX = -999999, lastCamY = -999999;
-	bool copyAlpha = false;          // BlitOptions::CopyAlpha COPIES alpha instead of applying it, so it is off
-	bool transparent = false;        // rectangles method: the `transparent` argument of CopySection
+	// Blit options set by the debug action: -1 = the method's own default, 0 = off, 1 = on
+	int optTransparent = -1, optCopyAlpha = -1, optSmooth = -1;
 	bool testPattern = false;        // draw the blend test pattern instead of the lighting
 	bool invertBlend = false;        // rectangles strategy: flips the Blend coefficient direction
 	int strategy = -1;               // how darkness reaches the screen; -1 = not chosen yet (see LumenExt.cpp)
@@ -30,6 +30,7 @@ struct LumenState {
 	std::string lastError;
 	std::wstring scratchW;           // backing store for text expressions
 	double lastRenderMs = 0, lastMaskMs = 0;
+	int pngSerial = 0;               // PNG method: alternates two temp file names
 	int alphaPitch = 0;
 
 	LumenState(int fw, int fh, const lumen::Engine::Settings& s) : engine(fw, fh, s), frameW(fw), frameH(fh) {}

@@ -140,7 +140,7 @@ def run(variant):
     need(len(obj) == 1 and obj[0]["Parameters"][1][0] == "Object", "object parameter in JSON")
     props = [x["Title"] for x in (lang.get("Properties") or lang.get("properties"))]
     need(props == ["Backdrop obstacles", "Pixel size"], "properties %s" % props)
-    for n in ("lumen.hpp", "lumen.cpp", "LumenState.hpp", "LumenExt.cpp", "LumenMembers.inc", "LumenCtor.inc"):
+    for n in ("lumen.hpp", "lumen.cpp", "lumen_png.hpp", "LumenState.hpp", "LumenExt.cpp", "LumenMembers.inc", "LumenCtor.inc"):
         need(os.path.exists(os.path.join(p, n)), "missing " + n)
     need(os.path.exists(os.path.join(out, "template-reference", "Extension.hpp")), "reference snapshot")
     shutil.rmtree(tmp)

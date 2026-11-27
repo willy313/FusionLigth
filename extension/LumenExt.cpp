@@ -1,12 +1,14 @@
 // Lumen: the Fusion-facing layer. Every SDK call here was checked against the SDK headers uploaded from a CI run
 // (SurfaceMultiPlat.hpp, MMFWindowsMasterHeader.hpp, Edif.hpp).
 #include "Common.hpp"
+#include "lumen_png.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <array>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
@@ -21,38 +23,38 @@ using namespace DarkEdif;
 // A hard crash shows no message, so the first steps of every risky path are appended to %TEMP%\\Lumen-debug.log;
 // the LAST line is the step that crashed (bounded to 80 lines per run). A second small file, Lumen-method.txt, remembers
 // which drawing method was tried and which was confirmed, so a method that crashed is skipped on the next launch.
-static std::string tempDir() {
+static std::filesystem::path tempDir() {
 #ifdef _WIN32
-	char b[MAX_PATH + 2] = { 0 };
-	const DWORD n = GetTempPathA(MAX_PATH, b);
-	return std::string(b, n);
+	wchar_t b[MAX_PATH + 2] = { 0 };
+	const DWORD n = GetTempPathW(MAX_PATH, b);
+	return std::filesystem::path(std::wstring(b, n));
 #else
 	const char* t = std::getenv("TMPDIR");
-	return std::string(t ? t : "/tmp") + "/";
+	return std::filesystem::path(t ? t : "/tmp");
 #endif
 }
 static void crumb(const std::string& msg) {
 	static int n = 0;
 	if (n >= 80) return;
-	std::ofstream f(tempDir() + "Lumen-debug.log", n == 0 ? std::ios::trunc : std::ios::app);
+	std::ofstream f(tempDir() / "Lumen-debug.log", n == 0 ? std::ios::trunc : std::ios::app);
 	if (f) { f << msg << "\n"; f.flush(); ++n; }
 }
 
-enum { M_ALPHA_LOCK = 0, M_ALPHA_SURFACE = 1, M_RECTS = 2, M_COUNT = 3 };
+enum { M_ALPHA_LOCK = 0, M_ALPHA_SURFACE = 1, M_RECTS = 2, M_PNG = 3, M_COUNT = 4 };
 static const char* methodName(int m) {
-	return m == M_ALPHA_LOCK ? "alpha lock" : m == M_ALPHA_SURFACE ? "alpha surface" : m == M_RECTS ? "rectangles" : "unset";
+	return m == M_ALPHA_LOCK ? "alpha lock" : m == M_ALPHA_SURFACE ? "alpha surface" : m == M_RECTS ? "rectangles" : m == M_PNG ? "png texture" : "unset";
 }
 static const std::string kBuildId = std::string(__DATE__) + " " + __TIME__;   // a new build forgets old verdicts
 
 static void markMethod(const char* what, int m) {
-	std::ofstream f(tempDir() + "Lumen-method.txt", std::ios::app);
+	std::ofstream f(tempDir() / "Lumen-method.txt", std::ios::app);
 	if (f) { f << what << " " << m << "\n"; f.flush(); }
 }
 // A method is "bad" when it was tried but never confirmed (the app died while using it).
 static int chooseMethod() {
 	bool tried[M_COUNT] = { false }, ok[M_COUNT] = { false };
 	{
-		std::ifstream f(tempDir() + "Lumen-method.txt");
+		std::ifstream f(tempDir() / "Lumen-method.txt");
 		std::string line;
 		bool sameBuild = false;
 		if (std::getline(f, line) && line == "build " + kBuildId) sameBuild = true;
@@ -64,14 +66,14 @@ static int chooseMethod() {
 			}
 		}
 		if (!sameBuild) {
-			std::ofstream o(tempDir() + "Lumen-method.txt", std::ios::trunc);
+			std::ofstream o(tempDir() / "Lumen-method.txt", std::ios::trunc);
 			if (o) o << "build " << kBuildId << "\n";
 		}
 	}
-	// Preference order: rectangles first (needs no alpha plane; both alpha methods crashed on the tested SDK build:
-	// GetAlphaBytes() faulted and GetAlphaSurface() raised "Unexpected depth 8. Cannot detect color format"), then the
-	// alpha methods, which stay available through the debug action.
-	static const int order[M_COUNT] = { M_RECTS, M_ALPHA_LOCK, M_ALPHA_SURFACE };
+	// Preference order: the PNG texture first (a Direct3D texture with real per-pixel alpha, the route the field notes confirm
+	// for PNG tilesets), then rectangles (needs no alpha at all), then the two alpha-plane writers, which crashed or raised
+	// "Unexpected depth 8" on the tested SDK build and stay available through the debug action.
+	static const int order[M_COUNT] = { M_PNG, M_RECTS, M_ALPHA_LOCK, M_ALPHA_SURFACE };
 	int pick = -1;
 	for (int i = 0; i < M_COUNT && pick < 0; ++i) if (ok[order[i]]) pick = order[i];       // a confirmed method wins
 	for (int i = 0; i < M_COUNT && pick < 0; ++i) if (!tried[order[i]]) pick = order[i];   // else the first not tried yet
@@ -93,11 +95,22 @@ struct Run { int x0, x1, y0, y1, q; };   // lightmap cells [x0,x1) x [y0,y1), da
 struct LumenGfx {
 	std::unique_ptr<Surface> mask;       // methods 0 and 1
 	std::unique_ptr<Surface> dot;        // method 2: 1x1 black
+	std::unique_ptr<Surface> tex;        // method 3: GPU texture loaded from the PNG
 	int mw = 0, mh = 0;
 	std::vector<Run> runs;               // method 2
 };
 
-LumenState::~LumenState() { delete gfx; }
+LumenState::~LumenState() {
+	delete gfx;
+	std::error_code ec;
+	std::filesystem::remove(tempDir() / "Lumen-mask-0.png", ec);
+	std::filesystem::remove(tempDir() / "Lumen-mask-1.png", ec);
+}
+
+// Resolved blit options: the debug action's value, or the method's default.
+static bool optTransparent(const LumenState& S) { return S.optTransparent >= 0 ? S.optTransparent != 0 : S.strategy == M_PNG; }
+static bool optCopyAlpha(const LumenState& S)   { return S.optCopyAlpha >= 0 ? S.optCopyAlpha != 0 : S.strategy == M_PNG; }   // the flag the notes use for textures
+static bool optSmooth(const LumenState& S)      { return S.optSmooth >= 0 ? S.optSmooth != 0 : S.strategy != M_RECTS; }
 
 static void ensureMask(Extension& e, LumenState& S, int mw, int mh) {
 	if (!S.gfx) S.gfx = new LumenGfx();
@@ -191,13 +204,37 @@ static void writeAlphaSurface(LumenState& S) {
 	if (logged <= 2) crumb("alpha surface: written");
 }
 
+static void writeMaskPng(Extension& e, LumenState& S) {
+	LumenGfx& G = *S.gfx;
+	const std::vector<uint32_t>& px = S.engine.pixels();
+	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
+	static int logged = 0;
+	const bool logIt = logged < 3;
+	if (logIt) { ++logged; crumb("png: encode " + std::to_string(mw) + "x" + std::to_string(mh)); }
+	const std::vector<std::uint8_t> bytes = lumen::encodeAlphaPng(px.data(), mw, mh);
+	const std::filesystem::path path = tempDir() / (S.pngSerial++ % 2 ? "Lumen-mask-1.png" : "Lumen-mask-0.png");
+	{
+		std::ofstream f(path, std::ios::binary | std::ios::trunc);
+		if (!f) { S.lastError = "Lumen could not write its temp PNG"; return; }
+		f.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+	}
+	if (logIt) crumb("png: written " + std::to_string(bytes.size()) + " bytes, loading as GPU texture");
+	G.tex = Surface::CreateFromFilePath(&e, path.wstring(), false, false, true);   // no bitmap/text funcs: a hardware texture with alpha
+	G.mw = mw; G.mh = mh;
+	if (logIt) crumb(G.tex ? "png: texture loaded" : "png: CreateFromFilePath returned null");
+	if (!G.tex) S.lastError = "Lumen could not load its PNG texture";
+}
+
 static void rebuildMask(Extension& e, LumenState& S) {
 	const auto t0 = std::chrono::steady_clock::now();
 	const std::vector<uint32_t>& px = S.engine.pixels();
 	const int mw = S.engine.mapWidth(), mh = S.engine.mapHeight();
 	if (px.size() != (size_t)mw * mh) return;
 	if (S.strategy < 0) S.strategy = S.forcedStrategy >= 0 ? S.forcedStrategy : chooseMethod();
-	if (S.strategy == M_RECTS) {
+	if (S.strategy == M_PNG) {
+		if (!S.gfx) S.gfx = new LumenGfx();
+		writeMaskPng(e, S);
+	} else if (S.strategy == M_RECTS) {
 		ensureDot(e, S);
 		buildRuns(S);
 	} else {
@@ -320,7 +357,7 @@ REFLAG Extension::LumenDisplay() {
 	if (logIt) { ++displayCalls; crumb("display #" + std::to_string(displayCalls) + ": begin"); }
 	if (S.engine.pixels().empty()) return (REFLAG)0;
 	if (S.maskDirty) { rebuildMask(*this, S); S.maskDirty = false; }
-	if (!S.gfx || (S.strategy == M_RECTS ? !S.gfx->dot : !S.gfx->mask)) return (REFLAG)0;
+	if (!S.gfx || (S.strategy == M_RECTS ? !S.gfx->dot : S.strategy == M_PNG ? !S.gfx->tex : !S.gfx->mask)) return (REFLAG)0;
 	LumenGfx& G = *S.gfx;
 
 	if (logIt) crumb("display: getting frame surface");
@@ -329,23 +366,29 @@ REFLAG Extension::LumenDisplay() {
 	const int d = S.engine.settings().divisor;
 	const int ox = S.engine.originPxX() - rhPtr->get_WindowX(), oy = S.engine.originPxY() - rhPtr->get_WindowY();
 	if (S.testPattern) { drawBlendTest(*this, S, D); return (REFLAG)0; }
-	if (S.strategy == M_RECTS) {
+	BlitOptions flags = BlitOptions::None;
+	if (optCopyAlpha(S)) flags = flags | BlitOptions::CopyAlpha;
+	if (optSmooth(S)) flags = flags | BlitOptions::AntiAliasing;
+	if (S.strategy == M_PNG) {
+		const Rect src(0, 0, G.mw, G.mh);
+		const Rect dst(ox, oy, ox + S.engine.blitWidth(), oy + S.engine.blitHeight(), true);
+		if (logIt) crumb("display: png texture blit " + std::to_string(G.mw) + "x" + std::to_string(G.mh) + " -> (" + std::to_string(ox) + "," + std::to_string(oy) + ") flags " + std::to_string((int)flags));
+		G.tex->CopySection(src, D, dst, optTransparent(S), flags, BlitOperation::Copy, 0);
+	} else if (S.strategy == M_RECTS) {
 		if (logIt) crumb("display: rectangles " + std::to_string(G.runs.size()));
 		const Rect one(0, 0, 1, 1);
-		const BlitOptions rectFlags = S.copyAlpha ? BlitOptions::CopyAlpha : BlitOptions::None;
+		const BlitOptions rectFlags = flags;
 		for (const Run& r : G.runs) {
 			const double opacity = (double)r.q / S.levels;
 			int coef = (int)std::lround((S.invertBlend ? opacity : 1.0 - opacity) * 128.0);   // Fusion's convention: 0 = opaque
 			coef = (std::max)(0, (std::min)(128, coef));
 			const Rect dst(ox + r.x0 * d, oy + r.y0 * d, ox + r.x1 * d, oy + r.y1 * d, true);
-			G.dot->CopySection(one, D, dst, S.transparent, rectFlags, BlitOperation::Blend, (std::uint8_t)coef);
+			G.dot->CopySection(one, D, dst, optTransparent(S), rectFlags, BlitOperation::Blend, (std::uint8_t)coef);
 		}
 	} else {
 		// Rect(l, t, r, b) rejects negative coordinates unless allowNeg is true, and our destination can start off screen.
 		const Rect src(0, 0, G.mw, G.mh);
 		const Rect dst(ox, oy, ox + S.engine.blitWidth(), oy + S.engine.blitHeight(), true);
-		BlitOptions flags = BlitOptions::AntiAliasing;
-		if (S.copyAlpha) flags = flags | BlitOptions::CopyAlpha;
 		if (logIt) crumb("display: blit " + std::to_string(G.mw) + "x" + std::to_string(G.mh) + " -> (" + std::to_string(ox) + "," + std::to_string(oy) + ") flags " + std::to_string((int)flags));
 		G.mask->CopySection(src, D, dst, true, flags, BlitOperation::Copy, 0);
 	}
@@ -428,14 +471,15 @@ void Extension::RemoveShadowCasterObject(RunObject* p0) {
 
 void Extension::SetQuality(int p0) { lx->engine.setDivisor(p0); lx->maskDirty = true; lx->forceRedraw = true; }
 
-void Extension::SetRenderOptions(int p0, int p1, int p2, int p3, int p4) {
+void Extension::SetRenderOptions(int p0, int p1, int p2, int p3, int p4, int p5) {
 	lx->forcedStrategy = (p0 >= 0 && p0 < M_COUNT) ? p0 : -1;
 	lx->strategy = lx->forcedStrategy;               // -1 = choose again automatically
 	lx->strategyConfirmed = lx->forcedStrategy >= 0; // forced methods are not remembered
 	lx->levels = (std::max)(4, (std::min)(64, p1));
 	lx->invertBlend = p2 != 0;
-	lx->transparent = p3 != 0;
-	lx->copyAlpha = p4 != 0;
+	lx->optTransparent = p3 < 0 ? -1 : (p3 != 0);
+	lx->optCopyAlpha = p4 < 0 ? -1 : (p4 != 0);
+	lx->optSmooth = p5 < 0 ? -1 : (p5 != 0);
 	lx->maskDirty = true;
 	lx->forceRedraw = true;
 }
@@ -466,11 +510,11 @@ const TCHAR* Extension::DebugInfo() {
 	char b[520];
 	std::snprintf(b, sizeof b,
 		"lights %d (visible %d, rebuilt %d), rays %ld, composes %d, lightmap %dx%d at pixel size %d, "
-		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (blits %d, levels %d), alpha pitch %d, transparent %d, copyalpha %d",
+		"window %dx%d, handle %.2f ms, mask write %.2f ms, method %s%s (blits %d, levels %d), transparent %d, copyalpha %d, smooth %d",
 		st.lightsTotal, st.lightsVisible, st.lightsRecomputed, st.raysCast, st.composes,
 		S.engine.mapWidth(), S.engine.mapHeight(), S.engine.settings().divisor,
 		S.winW, S.winH, S.lastRenderMs, S.lastMaskMs, methodName(S.strategy), S.strategyConfirmed ? " (confirmed)" : "",
-		S.runCount, S.levels, S.alphaPitch, S.transparent ? 1 : 0, S.copyAlpha ? 1 : 0);
+		S.runCount, S.levels, optTransparent(S) ? 1 : 0, optCopyAlpha(S) ? 1 : 0, optSmooth(S) ? 1 : 0);
 	return text(S, b);
 }
 

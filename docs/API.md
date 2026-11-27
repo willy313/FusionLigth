@@ -72,12 +72,13 @@ Object parameters make Fusion run the action once for every selected instance of
 ### Settings
 - **Set lightmap pixel size**: Set lightmap pixel size to <Pixel size> (1 = sharpest, 4 = fastest)
   - Integer: Pixel size (1 to 16)
-- **Debug: render options**: Debug: method <Method> (-1 auto, 0, 1, 2), shade levels <Shade levels>, invert blend <Invert blend direction> (1/0), source transparent <Source transparent flag of the blit> (1/0), copy-alpha flag <Copy-alpha blit flag> (1/0)
-  - Integer: Method (-1 = automatic, 0 = alpha lock, 1 = alpha surface, 2 = rectangles)
-  - Integer: Shade levels (4 to 64; fewer = faster, rectangles method)
+- **Debug: render options**: Debug: method <Method> (-1 auto, 0-3), shade levels <Shade levels>, invert blend <Invert blend direction>, transparent <Transparent flag of the blit>, copy-alpha <Copy-alpha blit flag>, smooth <Anti-alias> (-1 = default, 0 = off, 1 = on)
+  - Integer: Method (-1 = automatic, 0 = alpha lock, 1 = alpha surface, 2 = rectangles, 3 = PNG texture)
+  - Integer: Shade levels (4 to 64; rectangles method)
   - Integer: Invert blend direction (1/0, rectangles method)
-  - Integer: Source transparent flag of the blit (1/0, rectangles method)
-  - Integer: Copy-alpha blit flag (1/0)
+  - Integer: Transparent flag of the blit (-1 = method default, 0, 1)
+  - Integer: Copy-alpha blit flag (-1 = method default, 0, 1)
+  - Integer: Anti-alias (smooth) blit flag (-1 = method default, 0, 1)
 - **Debug: show blend test pattern**: Debug: show blend test pattern <On> (1 = on, 0 = off)
   - Integer: On (1) or off (0)
 

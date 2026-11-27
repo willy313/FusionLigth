@@ -10,7 +10,7 @@
 #include <iterator>
 #include <string>
 
-namespace DarkEdif { std::vector<Blit> g_blits; int g_negViolations = 0; bool g_blitWhileLocked = false; const Surface* g_lastBlitSource = nullptr; }
+namespace DarkEdif { std::vector<Blit> g_blits; int g_negViolations = 0; bool g_blitWhileLocked = false; int g_pngLoads = 0; std::wstring g_lastPngPath; const Surface* g_lastBlitSource = nullptr; }
 using DarkEdif::g_blits;
 using DarkEdif::BlitOperation;
 using DarkEdif::BlitOptions;
@@ -35,7 +35,7 @@ int main() {
 	RunObject self; HeaderObject& ho = self.ho;
 	Extension e(&rh, &self, &ed);
 
-	e.SetRenderOptions(0, 16, 0, 0, 0);                        // this flow checks the alpha-lock method; auto-selection is tested below
+	e.SetRenderOptions(0, 16, 0, -1, -1, -1);                  // this flow checks the alpha-lock method; auto-selection is tested below
 	// constructed from properties: "Pixel size" = 2
 	CHECK(e.lx && e.lx->engine.settings().divisor == 2 && e.lx->winW == 640);
 	// manual display: the object is sized to the window (not the editor size) so Fusion calls Display()
@@ -110,9 +110,9 @@ int main() {
 	CHECK(e.LumenHandle() == REFLAG::DISPLAY);
 
 	// render options + quality + errors
-	e.SetRenderOptions(0, 16, 0, 0, 1); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(0, 16, 0, -1, 1, -1); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits.size() == 1 && g_blits[0].flags == (BlitOptions::AntiAliasing | BlitOptions::CopyAlpha));
-	e.SetRenderOptions(0, 16, 0, 0, 0); g_blits.clear(); e.LumenDisplay();
+	e.SetRenderOptions(0, 16, 0, -1, 0, -1); g_blits.clear(); e.LumenDisplay();
 	CHECK(g_blits[0].flags == BlitOptions::AntiAliasing);
 	e.SetQuality(4); CHECK(e.LumenHandle() == REFLAG::DISPLAY && e.lx->engine.settings().divisor == 4);
 	e.LumenDisplay();
@@ -155,10 +155,32 @@ int main() {
 	e.DetachLight(6); player.ho.x = 500; e.LumenHandle();
 	CHECK(e.LightX(6) == 105.0f);                              // detached lights stay where they are
 
+	// ---- method 3: PNG loaded as a texture with real per-pixel alpha, one blit
+	{
+		e.CreateLight(40, 200, 150, 100, 1.0f, 1); e.LumenHandle();
+		const int loadsBefore = DarkEdif::g_pngLoads;
+		e.SetRenderOptions(3, 16, 0, -1, -1, -1); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		CHECK(DarkEdif::g_pngLoads == loadsBefore + 1 && !DarkEdif::g_lastPngPath.empty());
+		CHECK(g_blits.size() == 1 && g_blits[0].op == BlitOperation::Copy && g_blits[0].transparent);
+		CHECK(g_blits[0].flags == (BlitOptions::CopyAlpha | BlitOptions::AntiAliasing));   // defaults: the flag the notes use, plus smoothing
+		CHECK(g_blits[0].srcW == e.lx->engine.mapWidth() && g_blits[0].dr - g_blits[0].dl == e.lx->engine.blitWidth());
+		const DarkEdif::Surface* tex = DarkEdif::g_lastBlitSource;
+		const int gx = 200 / 2 - e.lx->engine.originPxX() / 2, gy = 150 / 2 - e.lx->engine.originPxY() / 2;
+		CHECK(tex && tex->hasAlpha && tex->w == (size_t)e.lx->engine.mapWidth());
+		CHECK(tex->alphaPlane[(size_t)gy * tex->alphaPitch + gx] < 20 && tex->alphaPlane[0] == 255);      // decoded from the PNG we wrote
+		bool same = true;                                                                                  // every pixel survives encode + decode
+		for (int y = 0; y < e.lx->engine.mapHeight() && same; ++y)
+			for (int x = 0; x < e.lx->engine.mapWidth(); ++x)
+				if (tex->alphaPlane[(size_t)y * tex->alphaPitch + x] != (e.lx->engine.pixels()[(size_t)y * e.lx->engine.mapWidth() + x] >> 24)) { same = false; break; }
+		CHECK(same);
+		e.SetRenderOptions(3, 16, 0, 0, 0, 0); g_blits.clear(); e.LumenDisplay();                         // options override the defaults
+		CHECK(g_blits.size() == 1 && !g_blits[0].transparent && g_blits[0].flags == BlitOptions::None);
+		e.SetRenderOptions(0, 16, 0, -1, -1, -1);
+	}
 	// ---- method 1: grey pixels of the alpha surface
 	{
 		e.CreateLight(30, 200, 150, 100, 1.0f, 1); e.LumenHandle();
-		e.SetRenderOptions(1, 16, 0, 0, 0); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		e.SetRenderOptions(1, 16, 0, -1, -1, -1); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
 		const DarkEdif::Surface* m = DarkEdif::g_lastBlitSource;
 		CHECK(g_blits.size() == 1 && g_blits[0].op == BlitOperation::Copy && m->alphaView);
 		const int gx = 200 / 2 - e.lx->engine.originPxX() / 2, gy = 150 / 2 - e.lx->engine.originPxY() / 2;
@@ -167,7 +189,7 @@ int main() {
 	}
 	// ---- method 2: rectangles, each lit cell covered exactly once, coefficient follows Fusion's convention
 	for (int levels : { 16, 32 }) for (int invert = 0; invert < 2; ++invert) {
-		e.SetRenderOptions(2, levels, invert, 0, 0); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
+		e.SetRenderOptions(2, levels, invert, -1, -1, -1); g_blits.clear(); e.LumenHandle(); e.LumenDisplay();
 		CHECK(!g_blits.empty() && (int)g_blits.size() == e.lx->runCount);
 		const int d = e.lx->engine.settings().divisor, mw = e.lx->engine.mapWidth(), mh = e.lx->engine.mapHeight();
 		const int ox = e.lx->engine.originPxX() - rh.get_WindowX(), oy = e.lx->engine.originPxY() - rh.get_WindowY();
@@ -188,7 +210,7 @@ int main() {
 		}
 		CHECK(exact);
 	}
-	e.SetRenderOptions(1, 0, 0, 0, 16);
+	e.SetRenderOptions(0, 16, 0, -1, -1, -1);
 
 	// ---- self-healing method choice: a method that was tried but never confirmed (the app died) is skipped next launch
 	{
@@ -203,17 +225,18 @@ int main() {
 			return std::make_pair(m, slurp(d + "/Lumen-method.txt"));
 		};
 		auto first = launch("lumen_t0", "");                                           // fresh launch creates the file
-		CHECK(first.first == 2);                                                       // rectangles first
+		CHECK(first.first == 3);                                                       // PNG texture first
 		const std::string header = first.second.substr(0, first.second.find('\n') + 1);   // "build <id>\n"
-		CHECK(header.rfind("build ", 0) == 0 && first.second.find("tried 2\n") != std::string::npos && first.second.find("ok 2\n") != std::string::npos);
-		CHECK(launch("lumen_t2", header + "tried 2\n").first == 0);                   // rectangles died -> alpha lock
-		CHECK(launch("lumen_t3", header + "tried 2\ntried 0\n").first == 1);          // ... then alpha surface
-		CHECK(launch("lumen_t4", header + "tried 2\ntried 0\ntried 1\n").first == 2); // all died: most conservative
-		CHECK(launch("lumen_t5", header + "tried 2\ntried 0\nok 0\n").first == 0);   // a confirmed method wins
-		CHECK(launch("lumen_t6", header + "tried 2\nok 2\n").first == 2);
-		CHECK(launch("lumen_t7", "build some other build\ntried 2\ntried 0\n").first == 2);   // old build's verdicts are forgotten
-		auto r = launch("lumen_t8", header + "tried 2\n");
-		CHECK(r.second.find("tried 0\n") != std::string::npos && r.second.find("ok 0\n") != std::string::npos);
+		CHECK(header.rfind("build ", 0) == 0 && first.second.find("tried 3\n") != std::string::npos && first.second.find("ok 3\n") != std::string::npos);
+		CHECK(launch("lumen_t2", header + "tried 3\n").first == 2);                    // PNG died -> rectangles
+		CHECK(launch("lumen_t3", header + "tried 3\ntried 2\n").first == 0);           // ... then alpha lock
+		CHECK(launch("lumen_t3b", header + "tried 3\ntried 2\ntried 0\n").first == 1); // ... then alpha surface
+		CHECK(launch("lumen_t4", header + "tried 3\ntried 2\ntried 0\ntried 1\n").first == 2); // all died: most conservative
+		CHECK(launch("lumen_t5", header + "tried 3\ntried 2\ntried 0\nok 0\n").first == 0);    // a confirmed method wins
+		CHECK(launch("lumen_t6", header + "tried 3\nok 2\n").first == 2);
+		CHECK(launch("lumen_t7", "build some other build\ntried 3\ntried 2\n").first == 3);     // old build's verdicts are forgotten
+		auto r = launch("lumen_t8", header + "tried 3\n");
+		CHECK(r.second.find("tried 2\n") != std::string::npos && r.second.find("ok 2\n") != std::string::npos);
 		setenv("TMPDIR", dir1.c_str(), 1);
 	}
 	{   // breadcrumb log written for diagnosing hard crashes

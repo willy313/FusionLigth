@@ -129,7 +129,7 @@ def main():
             f.write("LUMEN_PROJECT_DIR=%s\n" % proj)
 
     # 3. overlay + generate
-    for src in ("core/lumen.hpp", "core/lumen.cpp", "extension/LumenState.hpp", "extension/LumenExt.cpp"):
+    for src in ("core/lumen.hpp", "core/lumen.cpp", "core/lumen_png.hpp", "extension/LumenState.hpp", "extension/LumenExt.cpp"):
         shutil.copy(os.path.join(a.repo, src), proj)
     stale = os.path.join(proj, "DarkExt.PostMinify.json")
     if os.path.exists(stale):

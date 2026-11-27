@@ -22,5 +22,10 @@ $CXX -std=c++17 -O2 -Wall -Wextra -o /tmp/lumen_core_tests tests/test_core.cpp c
 echo "extension mock test"
 $CXX -std=c++17 -O1 -Wall -Wextra -Wno-unused-parameter -DFUSION_INTERNAL_ACCESS $INC -o /tmp/lumen_ext_tests tests/test_ext.cpp extension/LumenExt.cpp core/lumen.cpp
 /tmp/lumen_ext_tests
+echo "png encoder"
+rm -rf /tmp/lumen_png && mkdir -p /tmp/lumen_png
+$CXX -std=c++17 -O1 -Wall -Wextra -o /tmp/lumen_png_gen tests/test_png.cpp
+/tmp/lumen_png_gen /tmp/lumen_png
+python3 tests/check_png.py /tmp/lumen_png | tail -1
 python3 ci/test_assemble.py | tail -1
 rm -rf "$GEN"

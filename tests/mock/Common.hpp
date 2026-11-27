@@ -7,6 +7,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <fstream>
+#include <iterator>
 #include <type_traits>
 #include <vector>
 
@@ -34,6 +36,7 @@ struct RunHeader {
 	int get_WindowY() { return winY; }
 };
 
+class Extension;
 namespace DarkEdif {
 // Mirrors the real SDK (SurfaceMultiPlat.hpp): Point and Rect reject negatives unless allowNeg; SetPixel takes a Point;
 // CreateFromMainWindow returns a reference; Surface is not copyable.
@@ -60,6 +63,8 @@ enum class BlitOperation { Copy, Blend };
 struct Blit { int srcW, srcH, dl, dt, dr, db; BlitOperation op; int coef; BlitOptions flags; bool transparent; };
 extern std::vector<Blit> g_blits;
 extern bool g_blitWhileLocked;
+extern int g_pngLoads;
+extern std::wstring g_lastPngPath;
 struct Surface;
 extern const Surface* g_lastBlitSource;
 template<typename T, typename C>
@@ -120,6 +125,32 @@ struct Surface {
 		g_lastBlitSource = this;
 		g_blitWhileLocked = g_blitWhileLocked || lockedAlpha;
 		return true;
+	}
+	// Mirrors CreateFromFilePath: loads a PNG. Decodes the stored-deflate PNGs Lumen writes (CRCs are not checked here;
+	// tests/check_png.py does that with a real decoder).
+	static std::unique_ptr<Surface> CreateFromFilePath(Extension*, std::wstring path, bool needBitmapFuncs, bool needTextFuncs, bool alpha) {
+		++g_pngLoads; g_lastPngPath = path;
+		std::string p(path.begin(), path.end());
+		std::ifstream f(p, std::ios::binary);
+		std::vector<std::uint8_t> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+		if (d.size() < 45) return nullptr;
+		auto u32 = [&](std::size_t o) { return ((std::uint32_t)d[o] << 24) | (d[o + 1] << 16) | (d[o + 2] << 8) | d[o + 3]; };
+		std::size_t pos = 8; std::uint32_t w = 0, h = 0; std::vector<std::uint8_t> idat;
+		while (pos + 12 <= d.size()) {
+			const std::uint32_t n = u32(pos); const std::string type(d.begin() + pos + 4, d.begin() + pos + 8);
+			if (type == "IHDR") { w = u32(pos + 8); h = u32(pos + 12); }
+			if (type == "IDAT") idat.insert(idat.end(), d.begin() + pos + 8, d.begin() + pos + 8 + n);
+			pos += 12 + n;
+		}
+		std::vector<std::uint8_t> raw; std::size_t z = 2;                     // skip the zlib header
+		for (bool last = false; !last && z + 5 <= idat.size();) {
+			last = idat[z] & 1; const std::size_t len = idat[z + 1] | (idat[z + 2] << 8); z += 5;
+			raw.insert(raw.end(), idat.begin() + z, idat.begin() + z + len); z += len;
+		}
+		auto s = std::make_unique<Surface>(nullptr, needBitmapFuncs, needTextFuncs, w, h, alpha);
+		for (std::uint32_t y = 0; y < h; ++y)
+			for (std::uint32_t x = 0; x < w; ++x) s->alphaPlane[(std::size_t)y * s->alphaPitch + x] = raw[(std::size_t)y * (1 + 4 * w) + 1 + 4 * x + 3];
+		return s;
 	}
 	static Surface& CreateFromMainWindow(RunHeader*) { static Surface s(nullptr, false, false, 640, 480, false); return s; }
 };
